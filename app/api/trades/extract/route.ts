@@ -11,9 +11,12 @@ import { extractTradesFromFile } from "@/lib/trades/extract"
 import {
   extractTradesRequestSchema,
   type FileExtractionResult,
+  type TradeTableRow,
 } from "@/lib/trades/schema"
+import { appendStoredTradeRows } from "@/lib/trades/storage"
 
 export const maxDuration = 60
+export const runtime = "nodejs"
 
 function getDataUrlByteLength(dataUrl: string) {
   const commaIndex = dataUrl.indexOf(",")
@@ -88,5 +91,24 @@ export async function POST(request: Request) {
     )
   }
 
-  return NextResponse.json({ results })
+  const rows: TradeTableRow[] = results.flatMap((result) =>
+    result.trades.map((trade) => ({
+      ...trade,
+      id: crypto.randomUUID(),
+      sourceFile: result.fileName,
+    }))
+  )
+
+  try {
+    await appendStoredTradeRows(rows)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Unable to persist extracted transactions."
+
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+
+  return NextResponse.json({ results, rows })
 }

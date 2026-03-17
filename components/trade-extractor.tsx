@@ -23,7 +23,16 @@ import {
   PromptInputTools,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input"
-import { TradesTable, type TradeTableRow } from "@/components/trades-table"
+import { HoldingsTable } from "@/components/holdings-table"
+import { TradesTable } from "@/components/trades-table"
+import {
+  aggregateHoldings,
+  applyPreviousCloseQuotes,
+} from "@/lib/portfolio/holdings"
+import {
+  previousCloseResponseSchema,
+  type PreviousCloseQuote,
+} from "@/lib/portfolio/schema"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -44,10 +53,12 @@ import {
 } from "@/lib/trades/constants"
 import {
   extractTradesResponseSchema,
+  tradeRowsResponseSchema,
   type ExtractTradesResponse,
+  type TradeTableRow,
 } from "@/lib/trades/schema"
 import { Bot, FileImage, FileText, Sparkles, TriangleAlert } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 function pluralize(value: number, singular: string, plural = `${singular}s`) {
   return value === 1 ? singular : plural
@@ -73,7 +84,7 @@ function getErrorMessage(error: unknown) {
     return error.message
   }
 
-  return "The extraction request failed."
+  return "The request failed."
 }
 
 function AttachmentChips() {
@@ -127,13 +138,7 @@ async function readErrorMessage(response: Response) {
 }
 
 function toTableRows(response: ExtractTradesResponse) {
-  return response.results.flatMap((result) =>
-    result.trades.map<TradeTableRow>((trade) => ({
-      ...trade,
-      id: crypto.randomUUID(),
-      sourceFile: result.fileName,
-    }))
-  )
+  return response.rows
 }
 
 function toIssues(response: ExtractTradesResponse) {
@@ -152,12 +157,164 @@ function toIssues(response: ExtractTradesResponse) {
   })
 }
 
+function mergeTradeRows(
+  existingRows: TradeTableRow[],
+  nextRows: TradeTableRow[]
+) {
+  const rowsById = new Map(existingRows.map((row) => [row.id, row]))
+
+  for (const row of nextRows) {
+    rowsById.set(row.id, row)
+  }
+
+  return [...rowsById.values()]
+}
+
 export function TradeExtractor() {
   const [rows, setRows] = useState<TradeTableRow[]>([])
   const [status, setStatus] = useState<ChatStatus>("ready")
   const [uploadIssue, setUploadIssue] = useState<string | null>(null)
   const [issues, setIssues] = useState<string[]>([])
+  const [restoreIssue, setRestoreIssue] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [quotesByKey, setQuotesByKey] = useState<
+    Record<string, PreviousCloseQuote>
+  >({})
+  const [quoteStatus, setQuoteStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle")
+  const [quoteRequestIssue, setQuoteRequestIssue] = useState<string | null>(
+    null
+  )
+
+  const aggregatedPortfolio = useMemo(() => aggregateHoldings(rows), [rows])
+  const valuedPortfolio = useMemo(
+    () => applyPreviousCloseQuotes(aggregatedPortfolio.holdings, quotesByKey),
+    [aggregatedPortfolio.holdings, quotesByKey]
+  )
+  const missingQuoteTargets = useMemo(
+    () =>
+      aggregatedPortfolio.holdings
+        .filter((holding) => !quotesByKey[holding.key])
+        .map((holding) => ({
+          market: holding.market,
+          ticker: holding.ticker,
+        })),
+    [aggregatedPortfolio.holdings, quotesByKey]
+  )
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadStoredTrades() {
+      try {
+        const response = await fetch("/api/trades/rows", {
+          cache: "no-store",
+        })
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response))
+        }
+
+        const payload = await response.json()
+        const parsed = tradeRowsResponseSchema.safeParse(payload)
+
+        if (!parsed.success) {
+          throw new Error(
+            "The server returned an unexpected transactions response."
+          )
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        setRows((currentRows) => mergeTradeRows(currentRows, parsed.data.rows))
+        setRestoreIssue(null)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setRestoreIssue(getErrorMessage(error))
+      }
+    }
+
+    void loadStoredTrades()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (aggregatedPortfolio.holdings.length === 0) {
+      setQuoteStatus("idle")
+      setQuoteRequestIssue(null)
+      return
+    }
+
+    if (missingQuoteTargets.length === 0) {
+      setQuoteStatus("ready")
+      return
+    }
+
+    let cancelled = false
+
+    async function loadPreviousCloses() {
+      setQuoteStatus("loading")
+      setQuoteRequestIssue(null)
+
+      try {
+        const response = await fetch("/api/quotes/previous-close", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ targets: missingQuoteTargets }),
+        })
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response))
+        }
+
+        const payload = await response.json()
+        const parsed = previousCloseResponseSchema.safeParse(payload)
+
+        if (!parsed.success) {
+          throw new Error("The server returned an unexpected price response.")
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        setQuotesByKey((currentQuotes) => {
+          const nextQuotes = { ...currentQuotes }
+
+          for (const quote of parsed.data.quotes) {
+            nextQuotes[quote.key] = quote
+          }
+
+          return nextQuotes
+        })
+        setQuoteStatus("ready")
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setQuoteStatus("error")
+        setQuoteRequestIssue(getErrorMessage(error))
+      }
+    }
+
+    void loadPreviousCloses()
+
+    return () => {
+      cancelled = true
+    }
+  }, [aggregatedPortfolio.holdings.length, missingQuoteTargets])
 
   async function handleSubmit(message: PromptInputMessage) {
     if (message.files.length === 0) {
@@ -213,7 +370,7 @@ export function TradeExtractor() {
         (result) => result.trades.length > 0
       ).length
 
-      setRows((currentRows) => [...currentRows, ...nextRows])
+      setRows((currentRows) => mergeTradeRows(currentRows, nextRows))
       setIssues(nextIssues)
       setSuccessMessage(
         `Added ${nextRows.length} ${pluralize(nextRows.length, "trade")} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`
@@ -251,6 +408,14 @@ export function TradeExtractor() {
               <Sparkles className="size-4" />
               <AlertTitle>Batch imported</AlertTitle>
               <AlertDescription>{successMessage}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {restoreIssue ? (
+            <Alert variant="destructive">
+              <TriangleAlert className="size-4" />
+              <AlertTitle>Saved transactions unavailable</AlertTitle>
+              <AlertDescription>{restoreIssue}</AlertDescription>
             </Alert>
           ) : null}
 
@@ -327,12 +492,19 @@ export function TradeExtractor() {
           </div>
           <div className="flex items-center gap-2">
             <Bot className="size-4" />
-            <span>{rows.length} rows captured this session</span>
+            <span>{rows.length} saved rows currently loaded</span>
           </div>
         </CardFooter>
       </Card>
 
       <TradesTable rows={rows} />
+      <HoldingsTable
+        groups={valuedPortfolio.groups}
+        issues={aggregatedPortfolio.issues}
+        requestError={quoteRequestIssue}
+        status={quoteStatus}
+        summaries={valuedPortfolio.summaries}
+      />
     </div>
   )
 }
