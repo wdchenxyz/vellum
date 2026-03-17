@@ -246,4 +246,45 @@ describe("applyPreviousCloseQuotes", () => {
       weight: 1,
     })
   })
+
+  it("recalculates weights from priced holdings when a quote is still pending", () => {
+    const { holdings } = aggregateHoldings([
+      makeTrade({ ticker: "AAPL", quantity: 10, price: 100 }),
+      makeTrade({
+        date: "2026-01-02",
+        ticker: "MSFT",
+        quantity: 5,
+        price: 50,
+      }),
+    ])
+
+    const quotesByKey: Record<string, PreviousCloseQuote> = {
+      [getHoldingKey({ market: "US", ticker: "AAPL" })]: {
+        asOf: "2026-03-17",
+        currency: "USD",
+        exchange: "NASDAQ",
+        key: "US:AAPL",
+        market: "US",
+        micCode: "XNAS",
+        previousClose: 150,
+        ticker: "AAPL",
+      },
+    }
+
+    const result = applyPreviousCloseQuotes(holdings, quotesByKey)
+    const usdGroup = result.groups.find((group) => group.currency === "USD")
+
+    expect(usdGroup?.totalMarketValue).toBeNull()
+    expect(usdGroup?.missingPriceCount).toBe(1)
+    expect(usdGroup?.holdings[0]).toMatchObject({
+      marketValue: 1500,
+      ticker: "AAPL",
+      weight: 1,
+    })
+    expect(usdGroup?.holdings[1]).toMatchObject({
+      marketValue: null,
+      ticker: "MSFT",
+      weight: null,
+    })
+  })
 })

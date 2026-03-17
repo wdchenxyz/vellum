@@ -356,25 +356,36 @@ export function applyPreviousCloseQuotes(
     const missingPriceCount = currencyHoldings.filter(
       (holding) => holding.marketValue === null
     ).length
+    const pricedMarketValueTotal = roundNumber(
+      currencyHoldings.reduce(
+        (sum, holding) => sum + (holding.marketValue ?? 0),
+        0
+      )
+    )
     const totalMarketValue =
-      missingPriceCount > 0
-        ? null
-        : roundNumber(
-            currencyHoldings.reduce(
-              (sum, holding) => sum + (holding.marketValue ?? 0),
-              0
-            )
-          )
+      missingPriceCount > 0 ? null : pricedMarketValueTotal
 
     const holdingsWithWeight = currencyHoldings
       .map((holding) => ({
         ...holding,
         weight:
-          totalMarketValue && holding.marketValue !== null
-            ? roundNumber(holding.marketValue / totalMarketValue, 6)
+          pricedMarketValueTotal > 0 && holding.marketValue !== null
+            ? roundNumber(holding.marketValue / pricedMarketValueTotal, 6)
             : null,
       }))
       .sort((left, right) => {
+        if (left.weight !== null && right.weight !== null) {
+          return right.weight - left.weight
+        }
+
+        if (left.weight !== null) {
+          return -1
+        }
+
+        if (right.weight !== null) {
+          return 1
+        }
+
         if (left.marketValue !== null && right.marketValue !== null) {
           return right.marketValue - left.marketValue
         }

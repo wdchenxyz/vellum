@@ -30,6 +30,8 @@ import {
   applyPreviousCloseQuotes,
 } from "@/lib/portfolio/holdings"
 import {
+  fxRateResponseSchema,
+  type FxRateSnapshot,
   previousCloseResponseSchema,
   type PreviousCloseQuote,
 } from "@/lib/portfolio/schema"
@@ -186,12 +188,24 @@ export function TradeExtractor() {
   const [quoteRequestIssue, setQuoteRequestIssue] = useState<string | null>(
     null
   )
+  const [fxSnapshot, setFxSnapshot] = useState<FxRateSnapshot | null>(null)
+  const [fxStatus, setFxStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle")
+  const [fxIssue, setFxIssue] = useState<string | null>(null)
 
   const aggregatedPortfolio = useMemo(() => aggregateHoldings(rows), [rows])
   const valuedPortfolio = useMemo(
     () => applyPreviousCloseQuotes(aggregatedPortfolio.holdings, quotesByKey),
     [aggregatedPortfolio.holdings, quotesByKey]
   )
+  const hasUsdBucket = valuedPortfolio.groups.some(
+    (group) => group.currency === "USD"
+  )
+  const hasTwdBucket = valuedPortfolio.groups.some(
+    (group) => group.currency === "TWD"
+  )
+  const needsUsdTwdFxSnapshot = hasUsdBucket && hasTwdBucket
   const missingQuoteTargets = useMemo(
     () =>
       aggregatedPortfolio.holdings
@@ -246,6 +260,63 @@ export function TradeExtractor() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!needsUsdTwdFxSnapshot) {
+      setFxStatus("idle")
+      setFxIssue(null)
+      return
+    }
+
+    if (fxSnapshot) {
+      setFxStatus("ready")
+      return
+    }
+
+    let cancelled = false
+
+    async function loadFxSnapshot() {
+      setFxStatus("loading")
+      setFxIssue(null)
+
+      try {
+        const response = await fetch("/api/quotes/fx-rate", {
+          cache: "no-store",
+        })
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response))
+        }
+
+        const payload = await response.json()
+        const parsed = fxRateResponseSchema.safeParse(payload)
+
+        if (!parsed.success) {
+          throw new Error("The server returned an unexpected FX response.")
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        setFxSnapshot(parsed.data.snapshot)
+        setFxStatus("ready")
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setFxStatus("error")
+        setFxIssue(getErrorMessage(error))
+      }
+    }
+
+    void loadFxSnapshot()
+
+    return () => {
+      cancelled = true
+    }
+  }, [fxSnapshot, needsUsdTwdFxSnapshot])
 
   useEffect(() => {
     if (aggregatedPortfolio.holdings.length === 0) {
@@ -499,6 +570,9 @@ export function TradeExtractor() {
 
       <TradesTable rows={rows} />
       <HoldingsTable
+        fxIssue={fxIssue}
+        fxSnapshot={fxSnapshot}
+        fxStatus={fxStatus}
         groups={valuedPortfolio.groups}
         issues={aggregatedPortfolio.issues}
         requestError={quoteRequestIssue}

@@ -27,6 +27,16 @@ export const previousCloseResponseSchema = z.object({
   quotes: z.array(previousCloseQuoteSchema),
 })
 
+export const fxRateSnapshotSchema = z.object({
+  asOf: z.string().nullable(),
+  pair: z.string().min(1),
+  rate: z.number().finite().positive(),
+})
+
+export const fxRateResponseSchema = z.object({
+  snapshot: fxRateSnapshotSchema,
+})
+
 export type SupportedMarket = z.infer<typeof supportedMarketSchema>
 export type PreviousCloseLookupTarget = z.infer<
   typeof previousCloseLookupTargetSchema
@@ -34,3 +44,5 @@ export type PreviousCloseLookupTarget = z.infer<
 export type PreviousCloseRequest = z.infer<typeof previousCloseRequestSchema>
 export type PreviousCloseQuote = z.infer<typeof previousCloseQuoteSchema>
 export type PreviousCloseResponse = z.infer<typeof previousCloseResponseSchema>
+export type FxRateSnapshot = z.infer<typeof fxRateSnapshotSchema>
+export type FxRateResponse = z.infer<typeof fxRateResponseSchema>

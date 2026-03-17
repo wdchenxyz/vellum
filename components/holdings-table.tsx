@@ -2,8 +2,13 @@ import {
   type PortfolioCurrencyGroup,
   type PortfolioSummary,
 } from "@/lib/portfolio/holdings"
+import type { FxRateSnapshot } from "@/lib/portfolio/schema"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import {
+  PortfolioWeightChart,
+  type PortfolioWeightChartHolding,
+} from "@/components/portfolio-weight-chart"
 import {
   Card,
   CardAction,
@@ -67,14 +72,37 @@ function getHoldingLabel(holding: PortfolioCurrencyGroup["holdings"][number]) {
   ) {
     return {
       primary: holding.ticker,
-      secondary: `${holding.quoteTicker} · ${holding.micCode ?? "MIC pending"}`,
+      secondary: holding.quoteTicker,
     }
   }
 
   return {
     primary: holding.ticker,
-    secondary: holding.micCode ?? "MIC pending",
+    secondary: null,
   }
+}
+
+function getCombinedWeightChartData(groups: PortfolioCurrencyGroup[]) {
+  return groups.flatMap((group) =>
+    group.holdings
+      .filter(
+        (holding) =>
+          (group.currency === "TWD" || group.currency === "USD") &&
+          holding.marketValue !== null
+      )
+      .map((holding) => {
+        const label = getHoldingLabel(holding)
+
+        return {
+          bucket: group.currency as "TWD" | "USD",
+          costBasis: holding.totalCostOpen,
+          key: holding.key,
+          label: label.primary,
+          marketValue: holding.marketValue ?? 0,
+          subtitle: label.secondary,
+        } satisfies PortfolioWeightChartHolding
+      })
+  )
 }
 
 function getQuoteStatusLabel(status: QuoteLoadStatus) {
@@ -110,12 +138,18 @@ function SummaryBadges({ summaries }: { summaries: PortfolioSummary[] }) {
 }
 
 export function HoldingsTable({
+  fxIssue,
+  fxSnapshot,
+  fxStatus,
   groups,
   summaries,
   status,
   issues,
   requestError,
 }: {
+  fxIssue: string | null
+  fxSnapshot: FxRateSnapshot | null
+  fxStatus: QuoteLoadStatus
   groups: PortfolioCurrencyGroup[]
   summaries: PortfolioSummary[]
   status: QuoteLoadStatus
@@ -126,6 +160,7 @@ export function HoldingsTable({
     (sum, group) => sum + group.holdings.length,
     0
   )
+  const combinedWeightChartData = getCombinedWeightChartData(groups)
 
   return (
     <Card className="border-border/70 bg-card/85 shadow-sm backdrop-blur-sm">
@@ -135,8 +170,8 @@ export function HoldingsTable({
             <CardTitle>Open holdings</CardTitle>
             <CardDescription>
               Average-cost positions derived from appended BUY and SELL rows.
-              Portfolio weights are calculated per currency bucket using
-              previous close prices.
+              Use the combined chart to compare selected buckets together, while
+              the table keeps each bucket weight breakdown.
             </CardDescription>
           </div>
           <CardAction>
@@ -178,6 +213,13 @@ export function HoldingsTable({
           </Alert>
         ) : null}
 
+        <PortfolioWeightChart
+          fxIssue={fxIssue}
+          fxSnapshot={fxSnapshot}
+          fxStatus={fxStatus}
+          holdings={combinedWeightChartData}
+        />
+
         {groups.length === 0 ? (
           <Table>
             <TableHeader>
@@ -189,7 +231,7 @@ export function HoldingsTable({
                 <TableHead className="text-right">Cost Basis</TableHead>
                 <TableHead className="text-right">Prev Close</TableHead>
                 <TableHead className="text-right">Market Value</TableHead>
-                <TableHead className="text-right">Weight</TableHead>
+                <TableHead className="text-right">Bucket Weight</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -239,61 +281,68 @@ export function HoldingsTable({
                   <TableHead className="text-right">Cost Basis</TableHead>
                   <TableHead className="text-right">Prev Close</TableHead>
                   <TableHead className="text-right">Market Value</TableHead>
-                  <TableHead className="text-right">Weight</TableHead>
+                  <TableHead className="text-right">Bucket Weight</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {group.holdings.map((holding) => (
-                  <TableRow key={holding.key}>
-                    <TableCell>
-                      <div className="flex min-w-0 flex-col gap-0.5">
-                        <span className="font-medium">
-                          {getHoldingLabel(holding).primary}
-                        </span>
-                        <span className="truncate text-xs text-muted-foreground">
-                          {getHoldingLabel(holding).secondary}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex min-w-0 flex-col gap-0.5">
-                        <Badge variant="outline" className="w-fit">
-                          {holding.market}
-                        </Badge>
-                        <span className="truncate text-xs text-muted-foreground">
-                          {holding.exchange ?? "Exchange pending"}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatQuantity(holding.quantityOpen)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(holding.averageCost, holding.currency)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(holding.totalCostOpen, holding.currency)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span>
-                          {formatMoney(holding.previousClose, holding.currency)}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {holding.previousCloseDate ??
-                            holding.quoteError ??
-                            "-"}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(holding.marketValue, holding.currency)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatPercent(holding.weight)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {group.holdings.map((holding) => {
+                  const label = getHoldingLabel(holding)
+
+                  return (
+                    <TableRow key={holding.key}>
+                      <TableCell>
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span className="font-medium">{label.primary}</span>
+                          {label.secondary ? (
+                            <span className="truncate text-xs text-muted-foreground">
+                              {label.secondary}
+                            </span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <Badge variant="outline" className="w-fit">
+                            {holding.market}
+                          </Badge>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {holding.exchange ?? "Exchange pending"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatQuantity(holding.quantityOpen)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(holding.averageCost, holding.currency)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(holding.totalCostOpen, holding.currency)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span>
+                            {formatMoney(
+                              holding.previousClose,
+                              holding.currency
+                            )}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {holding.previousCloseDate ??
+                              holding.quoteError ??
+                              "-"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(holding.marketValue, holding.currency)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatPercent(holding.weight)}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
               <TableFooter>
                 <TableRow>
@@ -314,7 +363,7 @@ export function HoldingsTable({
               </TableFooter>
               <TableCaption>
                 {group.totalMarketValue === null
-                  ? "Weights unlock when every holding in this currency bucket has a previous close price."
+                  ? "Weights are recalculated from priced holdings only while quotes are pending in this bucket."
                   : "Weights are calculated within this currency bucket."}
               </TableCaption>
             </Table>

@@ -327,3 +327,24 @@ export async function fetchPreviousCloseSnapshots(
     })
   )
 }
+
+export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
+  const payload = await fetchTwelveDataJson(
+    "/eod",
+    {
+      symbol: "USD/TWD",
+    },
+    fetcher
+  )
+  const parsed = twelveDataEodResponseSchema.safeParse(payload)
+
+  if (!parsed.success) {
+    throw new Error("Twelve Data returned an invalid USD/TWD response.")
+  }
+
+  return {
+    asOf: parsed.data.datetime ?? null,
+    pair: "USD/TWD",
+    rate: parseDecimal(parsed.data.close),
+  }
+}

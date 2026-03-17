@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   fetchPreviousCloseSnapshots,
+  fetchUsdTwdFxSnapshot,
   selectInstrumentMatch,
 } from "@/lib/quotes/twelve-data"
 
@@ -338,5 +339,35 @@ describe("fetchPreviousCloseSnapshots", () => {
         ticker: "9999",
       },
     ])
+  })
+})
+
+describe("fetchUsdTwdFxSnapshot", () => {
+  const originalApiKey = process.env.TWELVEDATA_API_KEY
+
+  beforeEach(() => {
+    process.env.TWELVEDATA_API_KEY = "test-key"
+  })
+
+  afterEach(() => {
+    process.env.TWELVEDATA_API_KEY = originalApiKey
+  })
+
+  it("loads the USD/TWD previous close from Twelve Data", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        close: "31.95997",
+        datetime: "2026-03-16",
+        symbol: "USD/TWD",
+      })
+    )
+
+    const result = await fetchUsdTwdFxSnapshot(fetchMock as typeof fetch)
+
+    expect(result).toEqual({
+      asOf: "2026-03-16",
+      pair: "USD/TWD",
+      rate: 31.95997,
+    })
   })
 })
