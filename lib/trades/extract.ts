@@ -15,6 +15,7 @@ const EXTRACTION_INSTRUCTIONS = [
   "A file may contain multiple transactions, so return all of them.",
   "Only return BUY or SELL trades that are actually visible.",
   "Normalize the date to YYYY-MM-DD when possible.",
+  "For Taiwan-listed securities, prefer the numeric stock code in the ticker field when it is visible; otherwise use the visible stock name.",
   "Normalize ticker and currency to uppercase.",
   "Return quantity, price, and fee as plain numbers without commas or symbols.",
   "Keep quantity positive. The side field carries the direction.",

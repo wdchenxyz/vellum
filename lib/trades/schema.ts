@@ -12,7 +12,9 @@ export const extractedTradeSchema = z.object({
   ticker: z
     .string()
     .min(1)
-    .describe("Security ticker symbol in uppercase, such as AAPL or TSLA."),
+    .describe(
+      "Security identifier, preferably a ticker or numeric stock code such as AAPL or 2330. If only a visible stock name is present, return that name."
+    ),
   quantity: z
     .number()
     .finite()
@@ -62,8 +64,18 @@ export const fileExtractionResultSchema = z.object({
   error: z.string().nullable().optional(),
 })
 
+export const tradeTableRowSchema = extractedTradeSchema.extend({
+  id: z.string().min(1),
+  sourceFile: z.string().min(1),
+})
+
 export const extractTradesResponseSchema = z.object({
   results: z.array(fileExtractionResultSchema),
+  rows: z.array(tradeTableRowSchema),
+})
+
+export const tradeRowsResponseSchema = z.object({
+  rows: z.array(tradeTableRowSchema),
 })
 
 export type ExtractedTrade = z.infer<typeof extractedTradeSchema>
@@ -73,4 +85,6 @@ export type ExtractedTradesEnvelope = z.infer<
 export type TradeFileInput = z.infer<typeof tradeFileSchema>
 export type ExtractTradesRequest = z.infer<typeof extractTradesRequestSchema>
 export type FileExtractionResult = z.infer<typeof fileExtractionResultSchema>
+export type TradeTableRow = z.infer<typeof tradeTableRowSchema>
 export type ExtractTradesResponse = z.infer<typeof extractTradesResponseSchema>
+export type TradeRowsResponse = z.infer<typeof tradeRowsResponseSchema>

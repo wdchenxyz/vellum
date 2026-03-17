@@ -16,12 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import type { ExtractedTrade } from "@/lib/trades/schema"
-
-export type TradeTableRow = ExtractedTrade & {
-  id: string
-  sourceFile: string
-}
+import type { TradeTableRow } from "@/lib/trades/schema"
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 8,
@@ -43,7 +38,8 @@ export function TradesTable({ rows }: { rows: TradeTableRow[] }) {
           <div className="flex-1">
             <CardTitle>Extracted transactions</CardTitle>
             <CardDescription>
-              Every successful upload appends new rows to this session table.
+              Every successful upload appends new rows to a local file-backed
+              transaction log.
             </CardDescription>
           </div>
           <CardAction>
@@ -115,7 +111,8 @@ export function TradesTable({ rows }: { rows: TradeTableRow[] }) {
             )}
           </TableBody>
           <TableCaption>
-            Rows stay in local page state for this MVP and reset on refresh.
+            Transactions are mirrored to a local JSON file so they survive page
+            refreshes in this MVP.
           </TableCaption>
         </Table>
       </CardContent>
