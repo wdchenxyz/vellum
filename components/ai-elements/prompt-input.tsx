@@ -1244,6 +1244,7 @@ export const PromptInputSubmit = ({
   onStop,
   onClick,
   children,
+  "aria-label": ariaLabel,
   ...props
 }: PromptInputSubmitProps) => {
   const isGenerating = status === "submitted" || status === "streaming"
@@ -1272,7 +1273,9 @@ export const PromptInputSubmit = ({
 
   return (
     <InputGroupButton
-      aria-label={isGenerating ? "Stop" : "Submit"}
+      aria-label={
+        ariaLabel ?? (children ? undefined : isGenerating ? "Stop" : "Submit")
+      }
       className={cn(className)}
       onClick={handleClick}
       size={size}

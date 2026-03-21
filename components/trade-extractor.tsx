@@ -47,7 +47,7 @@ import {
   type TradeTableRow,
 } from "@/lib/trades/schema"
 import { ChevronDown, Paperclip, TriangleAlert } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useId, useMemo, useState } from "react"
 
 function pluralize(value: number, singular: string, plural = `${singular}s`) {
   return value === 1 ? singular : plural
@@ -135,6 +135,9 @@ function AttachmentTray() {
 }
 
 function OptionalNote() {
+  const textareaId = useId()
+  const descriptionId = `${textareaId}-description`
+
   return (
     <details className="group border-t border-border/70 bg-secondary/15 px-4 py-3">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-secondary-foreground">
@@ -144,11 +147,22 @@ function OptionalNote() {
         </span>
         <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
       </summary>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+      <label
+        className="mt-2 block text-sm font-medium text-foreground"
+        htmlFor={textareaId}
+      >
+        Context note
+      </label>
+      <p
+        className="mt-1 max-w-2xl text-sm text-muted-foreground"
+        id={descriptionId}
+      >
         Use this only when the document needs extra context.
       </p>
       <PromptInputTextarea
+        aria-describedby={descriptionId}
         className="mt-3 min-h-20"
+        id={textareaId}
         placeholder="Example: ignore account summary totals and extract only filled trades."
       />
     </details>

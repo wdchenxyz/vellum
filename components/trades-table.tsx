@@ -58,7 +58,7 @@ export function TradesTable({
       {successMessage ? (
         <Alert className="border-primary/20 bg-primary/10">
           <AlertTitle className="text-primary">Rows added</AlertTitle>
-          <AlertDescription className="text-primary/80">
+          <AlertDescription className="text-primary">
             {successMessage}
           </AlertDescription>
         </Alert>
