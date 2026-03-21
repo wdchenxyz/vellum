@@ -296,6 +296,7 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
   }
 
   const chartHeight = Math.max(bars.length * 52, 260)
+  const shouldScrollChart = chartHeight > 560
   const showFxContext = availableBuckets.length > 1
 
   return (
@@ -368,68 +369,74 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
           Weight bars appear after the selected buckets have priced holdings.
         </div>
       ) : (
-        <ChartContainer
-          className="aspect-auto min-h-[260px] w-full"
-          config={chartConfig}
-          style={{ height: `${chartHeight}px` }}
+        <div
+          className={
+            shouldScrollChart ? "max-h-[560px] overflow-y-auto pr-1" : undefined
+          }
         >
-          <BarChart
-            accessibilityLayer
-            data={bars}
-            layout="vertical"
-            margin={{ left: 0, right: 20, top: 8, bottom: 8 }}
+          <ChartContainer
+            className="aspect-auto min-h-[260px] w-full"
+            config={chartConfig}
+            style={{ height: `${chartHeight}px` }}
           >
-            <CartesianGrid horizontal={false} />
-            <YAxis
-              axisLine={false}
-              dataKey="label"
-              tickLine={false}
-              tickMargin={10}
-              type="category"
-              width={80}
-            />
-            <XAxis
-              axisLine={false}
-              domain={[0, 1]}
-              tickFormatter={(value) => formatPercent(Number(value))}
-              tickLine={false}
-              tickMargin={8}
-              type="number"
-            />
-            <ChartTooltip
-              content={
-                <PortfolioWeightTooltip baseCurrency={summary.baseCurrency} />
-              }
-              cursor={false}
-            />
-            <Bar dataKey="costWeight" radius={[8, 0, 0, 8]} stackId="value">
-              {bars.map((bar) => (
-                <Cell
-                  key={`${bar.key}-cost`}
-                  {...getBucketSegmentStyle({
-                    bucket: bar.bucket,
-                    isActive: bar.isActive,
-                    isUnderwater: bar.isUnderwater,
-                    segment: "cost",
-                  })}
-                />
-              ))}
-            </Bar>
-            <Bar dataKey="profitWeight" radius={[0, 8, 8, 0]} stackId="value">
-              {bars.map((bar) => (
-                <Cell
-                  key={`${bar.key}-profit`}
-                  {...getBucketSegmentStyle({
-                    bucket: bar.bucket,
-                    isActive: bar.isActive,
-                    isUnderwater: false,
-                    segment: "profit",
-                  })}
-                />
-              ))}
-            </Bar>
-          </BarChart>
-        </ChartContainer>
+            <BarChart
+              accessibilityLayer
+              data={bars}
+              layout="vertical"
+              margin={{ left: 0, right: 20, top: 8, bottom: 8 }}
+            >
+              <CartesianGrid horizontal={false} />
+              <YAxis
+                axisLine={false}
+                dataKey="label"
+                tickLine={false}
+                tickMargin={10}
+                type="category"
+                width={80}
+              />
+              <XAxis
+                axisLine={false}
+                domain={[0, 1]}
+                tickFormatter={(value) => formatPercent(Number(value))}
+                tickLine={false}
+                tickMargin={8}
+                type="number"
+              />
+              <ChartTooltip
+                content={
+                  <PortfolioWeightTooltip baseCurrency={summary.baseCurrency} />
+                }
+                cursor={false}
+              />
+              <Bar dataKey="costWeight" radius={[8, 0, 0, 8]} stackId="value">
+                {bars.map((bar) => (
+                  <Cell
+                    key={`${bar.key}-cost`}
+                    {...getBucketSegmentStyle({
+                      bucket: bar.bucket,
+                      isActive: bar.isActive,
+                      isUnderwater: bar.isUnderwater,
+                      segment: "cost",
+                    })}
+                  />
+                ))}
+              </Bar>
+              <Bar dataKey="profitWeight" radius={[0, 8, 8, 0]} stackId="value">
+                {bars.map((bar) => (
+                  <Cell
+                    key={`${bar.key}-profit`}
+                    {...getBucketSegmentStyle({
+                      bucket: bar.bucket,
+                      isActive: bar.isActive,
+                      isUnderwater: false,
+                      segment: "profit",
+                    })}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ChartContainer>
+        </div>
       )}
     </div>
   )

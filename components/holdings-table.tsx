@@ -329,16 +329,13 @@ export const HoldingsTable = memo(function HoldingsTable({
             ) : null}
 
             {combinedWeightChartData.length > 0 ? (
-              <details className="group rounded-lg border border-primary/20 bg-accent/30 px-4 py-3">
-                <summary className="flex cursor-pointer list-none items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-medium">Weight chart</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Optional cross-bucket view for priced holdings.
-                    </p>
-                  </div>
-                  <ChevronDown className="mt-0.5 size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-                </summary>
+              <section className="rounded-lg border border-primary/20 bg-accent/30 px-4 py-3">
+                <div>
+                  <h3 className="text-sm font-medium">Weight chart</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Cross-bucket view for priced holdings.
+                  </p>
+                </div>
 
                 <div className="mt-4">
                   <PortfolioWeightChart
@@ -348,7 +345,7 @@ export const HoldingsTable = memo(function HoldingsTable({
                     holdings={combinedWeightChartData}
                   />
                 </div>
-              </details>
+              </section>
             ) : null}
 
             {groups.length === 0 ? (

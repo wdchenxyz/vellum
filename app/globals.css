@@ -192,6 +192,11 @@
     background-image: var(--surface-page-image);
   }
 
+  .surface-upload {
+    background-image: var(--surface-upload-image);
+    box-shadow: var(--surface-upload-shadow);
+  }
+
   .surface-review {
     background-image: var(--surface-review-image);
   }
@@ -202,10 +207,5 @@
 
   .shadow-primary-soft {
     box-shadow: var(--shadow-primary-soft);
-  }
-
-  .trade-upload-surface > [data-slot="input-group"] {
-    background-image: var(--surface-upload-image);
-    box-shadow: var(--surface-upload-shadow);
   }
 }

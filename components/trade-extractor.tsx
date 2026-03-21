@@ -542,7 +542,7 @@ export function TradeExtractor() {
 
         <PromptInput
           accept={UPLOAD_ACCEPT}
-          className="trade-upload-surface [&>[data-slot=input-group]]:overflow-hidden [&>[data-slot=input-group]]:rounded-xl [&>[data-slot=input-group]]:border-primary/20"
+          inputGroupClassName="surface-upload rounded-xl border-primary/20"
           maxFiles={MAX_FILES}
           maxFileSize={MAX_FILE_SIZE_BYTES}
           multiple
