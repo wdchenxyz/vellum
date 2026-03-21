@@ -4,30 +4,20 @@ import {
 } from "@/lib/portfolio/holdings"
 import type { FxRateSnapshot } from "@/lib/portfolio/schema"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import {
   PortfolioWeightChart,
   type PortfolioWeightChartHolding,
 } from "@/components/portfolio-weight-chart"
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
   Table,
   TableBody,
-  TableCaption,
   TableCell,
   TableFooter,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { CircleAlert, LoaderCircle } from "lucide-react"
+import { ChevronDown, CircleAlert } from "lucide-react"
 
 export type QuoteLoadStatus = "idle" | "loading" | "ready" | "error"
 
@@ -105,36 +95,78 @@ function getCombinedWeightChartData(groups: PortfolioCurrencyGroup[]) {
   )
 }
 
-function getQuoteStatusLabel(status: QuoteLoadStatus) {
+function formatSummary(summary: PortfolioSummary) {
+  return summary.totalMarketValue === null
+    ? `${summary.currency} pending`
+    : `${summary.currency} ${formatMoney(summary.totalMarketValue, summary.currency)}`
+}
+
+function getPortfolioStatusCopy({
+  holdingCount,
+  status,
+}: {
+  holdingCount: number
+  status: QuoteLoadStatus
+}) {
+  if (holdingCount === 0) {
+    return "Open holdings appear after imported buys and sells net out."
+  }
+
   switch (status) {
     case "loading":
-      return "Loading previous closes"
+      return "Loading previous closes for the current holdings."
     case "error":
-      return "Quote request failed"
+      return "Previous-close data is partially unavailable."
     case "ready":
-      return "Previous close ready"
+      return "Previous-close data is ready for the current holdings."
     default:
-      return "Waiting for holdings"
+      return "Open when you want a valuation view."
   }
 }
 
-function SummaryBadges({ summaries }: { summaries: PortfolioSummary[] }) {
-  if (summaries.length === 0) {
-    return null
+function getGroupSummary(group: PortfolioCurrencyGroup) {
+  const holdingLabel = `${group.holdings.length} ${group.holdings.length === 1 ? "holding" : "holdings"}`
+
+  if (group.totalMarketValue === null) {
+    if (group.missingPriceCount > 0) {
+      return `${holdingLabel} • waiting on ${group.missingPriceCount} previous close ${group.missingPriceCount === 1 ? "price" : "prices"}.`
+    }
+
+    return `${holdingLabel} • market value unavailable.`
   }
 
-  return (
-    <div className="flex flex-wrap gap-2">
-      {summaries.map((summary) => (
-        <Badge key={summary.currency} variant="secondary">
-          {summary.currency}{" "}
-          {summary.totalMarketValue === null
-            ? "pending"
-            : formatMoney(summary.totalMarketValue, summary.currency)}
-        </Badge>
-      ))}
-    </div>
-  )
+  return `${holdingLabel} • total value ${formatMoney(group.totalMarketValue, group.currency)}.`
+}
+
+function getBucketDotColor(currency: string) {
+  switch (currency) {
+    case "TWD":
+      return "var(--color-chart-1)"
+    case "USD":
+      return "var(--color-chart-2)"
+    default:
+      return "var(--color-muted-foreground)"
+  }
+}
+
+function getBucketSurfaceClasses(currency: string) {
+  switch (currency) {
+    case "TWD":
+      return {
+        surface: "border-primary/20 bg-primary/5",
+        header: "bg-primary/10",
+      }
+    case "USD":
+      return {
+        surface: "border-secondary/35 bg-secondary/15",
+        header: "bg-secondary/30",
+      }
+    default:
+      return {
+        surface: "border-border/70 bg-background/95",
+        header: "bg-muted/60",
+      }
+  }
 }
 
 export function HoldingsTable({
@@ -161,215 +193,236 @@ export function HoldingsTable({
     0
   )
   const combinedWeightChartData = getCombinedWeightChartData(groups)
+  const summariesLabel = summaries.map(formatSummary).join(" • ")
 
   return (
-    <Card className="border-border/70 bg-card/85 shadow-sm backdrop-blur-sm">
-      <CardHeader>
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="flex-1">
-            <CardTitle>Open holdings</CardTitle>
-            <CardDescription>
-              Average-cost positions derived from appended BUY and SELL rows.
-              Use the combined chart to compare selected buckets together, while
-              the table keeps each bucket weight breakdown.
-            </CardDescription>
+    <section className="overflow-hidden rounded-xl border border-secondary/30 bg-[linear-gradient(180deg,rgba(252,250,245,0.86),rgba(244,241,233,0.92))] dark:bg-[linear-gradient(180deg,rgba(38,35,31,0.32),rgba(22,27,30,0.82))]">
+      <details className="group">
+        <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-4 px-4 py-4 transition-colors hover:bg-secondary/10">
+          <div className="space-y-1">
+            <p className="text-xs font-medium tracking-[0.16em] text-secondary-foreground uppercase">
+              Analyze
+            </p>
+            <h2 className="text-lg font-medium tracking-tight">
+              Portfolio analysis
+            </h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              {getPortfolioStatusCopy({ holdingCount, status })}
+            </p>
           </div>
-          <CardAction>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Badge variant="secondary">
+
+          <div className="flex items-start gap-3">
+            <div className="text-right">
+              <p className="text-sm font-medium text-foreground">
                 {holdingCount} {holdingCount === 1 ? "holding" : "holdings"}
-              </Badge>
-              <Badge variant={status === "error" ? "destructive" : "outline"}>
-                {status === "loading" ? (
-                  <LoaderCircle className="size-3 animate-spin" />
-                ) : null}
-                {getQuoteStatusLabel(status)}
-              </Badge>
+              </p>
+              <p className="max-w-72 text-xs text-muted-foreground">
+                {summariesLabel || "No open holdings yet."}
+              </p>
             </div>
-          </CardAction>
-        </div>
-        <SummaryBadges summaries={summaries} />
-      </CardHeader>
-      <CardContent className="flex flex-col gap-6">
-        {requestError ? (
-          <Alert variant="destructive">
-            <CircleAlert className="size-4" />
-            <AlertTitle>Price lookup failed</AlertTitle>
-            <AlertDescription>{requestError}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {issues.length > 0 ? (
-          <Alert variant="destructive">
-            <CircleAlert className="size-4" />
-            <AlertTitle>Some transactions are excluded</AlertTitle>
-            <AlertDescription>
-              <div className="flex flex-col gap-1">
-                {issues.map((issue) => (
-                  <p key={issue}>{issue}</p>
-                ))}
-              </div>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        <PortfolioWeightChart
-          fxIssue={fxIssue}
-          fxSnapshot={fxSnapshot}
-          fxStatus={fxStatus}
-          holdings={combinedWeightChartData}
-        />
-
-        {groups.length === 0 ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Ticker</TableHead>
-                <TableHead>Market</TableHead>
-                <TableHead className="text-right">Open Qty</TableHead>
-                <TableHead className="text-right">Avg Cost</TableHead>
-                <TableHead className="text-right">Cost Basis</TableHead>
-                <TableHead className="text-right">Prev Close</TableHead>
-                <TableHead className="text-right">Market Value</TableHead>
-                <TableHead className="text-right">Bucket Weight</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow>
-                <TableCell
-                  className="py-12 text-center text-muted-foreground"
-                  colSpan={8}
-                >
-                  Open positions will appear here after your uploaded trades are
-                  netted into holdings.
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        ) : null}
-
-        {groups.map((group) => (
-          <div className="flex flex-col gap-3" key={group.currency}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-medium">
-                  {group.currency} bucket
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  {group.totalMarketValue === null
-                    ? group.missingPriceCount > 0
-                      ? `Waiting on ${group.missingPriceCount} previous close ${group.missingPriceCount === 1 ? "price" : "prices"}.`
-                      : "Market value is not available yet."
-                    : `Total market value ${formatMoney(group.totalMarketValue, group.currency)}.`}
-                </p>
-              </div>
-              {group.missingPriceCount > 0 ? (
-                <Badge variant="outline">
-                  {group.missingPriceCount} pending{" "}
-                  {group.missingPriceCount === 1 ? "quote" : "quotes"}
-                </Badge>
-              ) : null}
-            </div>
-
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Ticker</TableHead>
-                  <TableHead>Market</TableHead>
-                  <TableHead className="text-right">Open Qty</TableHead>
-                  <TableHead className="text-right">Avg Cost</TableHead>
-                  <TableHead className="text-right">Cost Basis</TableHead>
-                  <TableHead className="text-right">Prev Close</TableHead>
-                  <TableHead className="text-right">Market Value</TableHead>
-                  <TableHead className="text-right">Bucket Weight</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {group.holdings.map((holding) => {
-                  const label = getHoldingLabel(holding)
-
-                  return (
-                    <TableRow key={holding.key}>
-                      <TableCell>
-                        <div className="flex min-w-0 flex-col gap-0.5">
-                          <span className="font-medium">{label.primary}</span>
-                          {label.secondary ? (
-                            <span className="truncate text-xs text-muted-foreground">
-                              {label.secondary}
-                            </span>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex min-w-0 flex-col gap-0.5">
-                          <Badge variant="outline" className="w-fit">
-                            {holding.market}
-                          </Badge>
-                          <span className="truncate text-xs text-muted-foreground">
-                            {holding.exchange ?? "Exchange pending"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatQuantity(holding.quantityOpen)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatMoney(holding.averageCost, holding.currency)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatMoney(holding.totalCostOpen, holding.currency)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <div className="flex flex-col items-end gap-0.5">
-                          <span>
-                            {formatMoney(
-                              holding.previousClose,
-                              holding.currency
-                            )}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {holding.previousCloseDate ??
-                              holding.quoteError ??
-                              "-"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatMoney(holding.marketValue, holding.currency)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatPercent(holding.weight)}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-              <TableFooter>
-                <TableRow>
-                  <TableCell className="font-medium" colSpan={4}>
-                    Total
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMoney(group.totalCostOpen, group.currency)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">-</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMoney(group.totalMarketValue, group.currency)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {group.totalMarketValue === null ? "-" : "100.00%"}
-                  </TableCell>
-                </TableRow>
-              </TableFooter>
-              <TableCaption>
-                {group.totalMarketValue === null
-                  ? "Weights are recalculated from priced holdings only while quotes are pending in this bucket."
-                  : "Weights are calculated within this currency bucket."}
-              </TableCaption>
-            </Table>
+            <ChevronDown className="mt-0.5 size-4 text-muted-foreground transition-transform group-open:rotate-180" />
           </div>
-        ))}
-      </CardContent>
-    </Card>
+        </summary>
+
+        <div className="border-t border-border/70 px-4 py-4">
+          <div className="flex flex-col gap-6">
+            {requestError ? (
+              <Alert
+                className="border-destructive/30 bg-destructive/5"
+                variant="destructive"
+              >
+                <CircleAlert className="size-4" />
+                <AlertTitle>Price lookup failed</AlertTitle>
+                <AlertDescription>{requestError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {issues.length > 0 ? (
+              <Alert
+                className="border-destructive/30 bg-destructive/5"
+                variant="destructive"
+              >
+                <CircleAlert className="size-4" />
+                <AlertTitle>Some transactions are excluded</AlertTitle>
+                <AlertDescription>
+                  <div className="flex flex-col gap-1">
+                    {issues.map((issue) => (
+                      <p key={issue}>{issue}</p>
+                    ))}
+                  </div>
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {combinedWeightChartData.length > 0 ? (
+              <details className="group rounded-lg border border-primary/20 bg-accent/30 px-4 py-3">
+                <summary className="flex cursor-pointer list-none items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-medium">Weight chart</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Optional cross-bucket view for priced holdings.
+                    </p>
+                  </div>
+                  <ChevronDown className="mt-0.5 size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                </summary>
+
+                <div className="mt-4">
+                  <PortfolioWeightChart
+                    fxIssue={fxIssue}
+                    fxSnapshot={fxSnapshot}
+                    fxStatus={fxStatus}
+                    holdings={combinedWeightChartData}
+                  />
+                </div>
+              </details>
+            ) : null}
+
+            {groups.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-secondary/35 bg-background/70 px-4 py-10 text-center text-sm text-muted-foreground">
+                Open positions appear here after your trades net into holdings.
+              </div>
+            ) : null}
+
+            {groups.map((group) => (
+              <section className="space-y-3" key={group.currency}>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="size-2 rounded-full"
+                      style={{
+                        backgroundColor: getBucketDotColor(group.currency),
+                      }}
+                    />
+                    <h3 className="text-base font-medium">
+                      {group.currency} bucket
+                    </h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {getGroupSummary(group)}
+                  </p>
+                </div>
+
+                <div
+                  className={`overflow-hidden rounded-lg border ${getBucketSurfaceClasses(group.currency).surface}`}
+                >
+                  <Table className="min-w-[860px]">
+                    <TableHeader
+                      className={getBucketSurfaceClasses(group.currency).header}
+                    >
+                      <TableRow>
+                        <TableHead>Ticker</TableHead>
+                        <TableHead>Market</TableHead>
+                        <TableHead className="text-right">Open qty</TableHead>
+                        <TableHead className="text-right">Avg cost</TableHead>
+                        <TableHead className="text-right">Cost basis</TableHead>
+                        <TableHead className="text-right">Prev close</TableHead>
+                        <TableHead className="text-right">Value</TableHead>
+                        <TableHead className="text-right">Weight</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.holdings.map((holding) => {
+                        const label = getHoldingLabel(holding)
+
+                        return (
+                          <TableRow key={holding.key}>
+                            <TableCell>
+                              <div className="flex min-w-0 flex-col gap-0.5">
+                                <span className="font-medium">
+                                  {label.primary}
+                                </span>
+                                {label.secondary ? (
+                                  <span className="truncate text-xs text-muted-foreground">
+                                    {label.secondary}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex min-w-0 flex-col gap-0.5">
+                                <span className="font-medium">
+                                  {holding.market}
+                                </span>
+                                <span className="truncate text-xs text-muted-foreground">
+                                  {holding.exchange ?? "Exchange pending"}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {formatQuantity(holding.quantityOpen)}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {formatMoney(
+                                holding.averageCost,
+                                holding.currency
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {formatMoney(
+                                holding.totalCostOpen,
+                                holding.currency
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span>
+                                  {formatMoney(
+                                    holding.previousClose,
+                                    holding.currency
+                                  )}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {holding.previousCloseDate ??
+                                    holding.quoteError ??
+                                    "-"}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {formatMoney(
+                                holding.marketValue,
+                                holding.currency
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {formatPercent(holding.weight)}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                    <TableFooter>
+                      <TableRow>
+                        <TableCell className="font-medium" colSpan={4}>
+                          Total
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(group.totalCostOpen, group.currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          -
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(group.totalMarketValue, group.currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {group.totalMarketValue === null ? "-" : "100.00%"}
+                        </TableCell>
+                      </TableRow>
+                    </TableFooter>
+                  </Table>
+                </div>
+
+                {group.totalMarketValue === null ? (
+                  <p className="text-xs text-muted-foreground">
+                    Weights use priced holdings only while quotes are pending.
+                  </p>
+                ) : null}
+              </section>
+            ))}
+          </div>
+        </div>
+      </details>
+    </section>
   )
 }

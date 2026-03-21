@@ -1,22 +1,15 @@
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import {
   Table,
   TableBody,
-  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
 import type { TradeTableRow } from "@/lib/trades/schema"
+import { TriangleAlert } from "lucide-react"
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 8,
@@ -30,28 +23,78 @@ function formatNumber(value: number | null) {
   return numberFormatter.format(value)
 }
 
-export function TradesTable({ rows }: { rows: TradeTableRow[] }) {
+type TradesTableProps = {
+  issues: string[]
+  restoreIssue: string | null
+  rows: TradeTableRow[]
+  successMessage: string | null
+}
+
+export function TradesTable({
+  issues,
+  restoreIssue,
+  rows,
+  successMessage,
+}: TradesTableProps) {
   return (
-    <Card className="border-border/70 bg-card/85 shadow-sm backdrop-blur-sm">
-      <CardHeader>
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="flex-1">
-            <CardTitle>Extracted transactions</CardTitle>
-            <CardDescription>
-              Every successful upload appends new rows to a local file-backed
-              transaction log.
-            </CardDescription>
-          </div>
-          <CardAction>
-            <Badge variant="secondary">
-              {rows.length} {rows.length === 1 ? "row" : "rows"}
-            </Badge>
-          </CardAction>
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1">
+          <p className="text-xs font-medium tracking-[0.16em] text-secondary-foreground uppercase">
+            Review
+          </p>
+          <h2 className="text-lg font-medium tracking-tight">
+            Review extracted trades
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Confirm the typed rows before you move on to portfolio analysis.
+          </p>
         </div>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
+        <p className="text-sm text-secondary-foreground/80">
+          {rows.length} {rows.length === 1 ? "row" : "rows"} saved
+        </p>
+      </div>
+
+      {successMessage ? (
+        <Alert className="border-primary/20 bg-primary/10">
+          <AlertTitle className="text-primary">Rows added</AlertTitle>
+          <AlertDescription className="text-primary/80">
+            {successMessage}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {issues.length > 0 ? (
+        <Alert
+          className="border-destructive/30 bg-destructive/5"
+          variant="destructive"
+        >
+          <TriangleAlert className="size-4" />
+          <AlertTitle>Review these files</AlertTitle>
+          <AlertDescription>
+            <div className="flex flex-col gap-1">
+              {issues.map((issue) => (
+                <p key={issue}>{issue}</p>
+              ))}
+            </div>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {restoreIssue ? (
+        <Alert
+          className="border-destructive/30 bg-destructive/5"
+          variant="destructive"
+        >
+          <TriangleAlert className="size-4" />
+          <AlertTitle>Saved rows unavailable</AlertTitle>
+          <AlertDescription>{restoreIssue}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="overflow-hidden rounded-xl border border-secondary/35 bg-[linear-gradient(180deg,rgba(255,253,249,0.96),rgba(249,244,236,0.92))] dark:bg-[linear-gradient(180deg,rgba(42,37,32,0.22),rgba(29,32,35,0.7))]">
+        <Table className="min-w-[720px]">
+          <TableHeader className="bg-secondary/30">
             <TableRow>
               <TableHead>Date</TableHead>
               <TableHead>Ticker</TableHead>
@@ -59,7 +102,9 @@ export function TradesTable({ rows }: { rows: TradeTableRow[] }) {
               <TableHead className="text-right">Quantity</TableHead>
               <TableHead className="text-right">Price</TableHead>
               <TableHead className="text-right">Currency</TableHead>
-              <TableHead className="text-right">Fee</TableHead>
+              <TableHead className="hidden text-right lg:table-cell">
+                Fee
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -69,8 +114,7 @@ export function TradesTable({ rows }: { rows: TradeTableRow[] }) {
                   className="py-12 text-center text-muted-foreground"
                   colSpan={7}
                 >
-                  Drop a trade confirmation or PDF above to start building the
-                  table.
+                  Upload a confirmation above. Extracted rows land here.
                 </TableCell>
               </TableRow>
             ) : (
@@ -103,19 +147,21 @@ export function TradesTable({ rows }: { rows: TradeTableRow[] }) {
                   <TableCell className="text-right font-medium tabular-nums">
                     {row.currency ?? "-"}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
+                  <TableCell className="hidden text-right tabular-nums lg:table-cell">
                     {formatNumber(row.fee)}
                   </TableCell>
                 </TableRow>
               ))
             )}
           </TableBody>
-          <TableCaption>
-            Transactions are mirrored to a local JSON file so they survive page
-            refreshes in this MVP.
-          </TableCaption>
         </Table>
-      </CardContent>
-    </Card>
+      </div>
+
+      {rows.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Rows persist locally between refreshes.
+        </p>
+      ) : null}
+    </section>
   )
 }
