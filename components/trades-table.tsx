@@ -1,3 +1,5 @@
+import { memo } from "react"
+
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -30,7 +32,48 @@ type TradesTableProps = {
   successMessage: string | null
 }
 
-export function TradesTable({
+function TradeSummaryCard({ row }: { row: TradeTableRow }) {
+  return (
+    <article className="rounded-lg border border-border/70 bg-background/80 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
+          <p className="font-medium text-foreground">{row.ticker}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {row.sourceFile}
+          </p>
+        </div>
+        <Badge variant={row.side === "BUY" ? "default" : "secondary"}>
+          {row.side}
+        </Badge>
+      </div>
+
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+        <div>
+          <dt className="text-xs text-muted-foreground">Date</dt>
+          <dd className="font-medium tabular-nums">{row.date}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Currency</dt>
+          <dd className="font-medium tabular-nums">{row.currency ?? "-"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Quantity</dt>
+          <dd className="tabular-nums">{formatNumber(row.quantity)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Price</dt>
+          <dd className="tabular-nums">{formatNumber(row.price)}</dd>
+        </div>
+        <div className="col-span-2">
+          <dt className="text-xs text-muted-foreground">Fee</dt>
+          <dd className="tabular-nums">{formatNumber(row.fee)}</dd>
+        </div>
+      </dl>
+    </article>
+  )
+}
+
+export const TradesTable = memo(function TradesTable({
   issues,
   restoreIssue,
   rows,
@@ -92,69 +135,72 @@ export function TradesTable({
         </Alert>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-secondary/35 bg-[linear-gradient(180deg,rgba(255,253,249,0.96),rgba(249,244,236,0.92))] dark:bg-[linear-gradient(180deg,rgba(42,37,32,0.22),rgba(29,32,35,0.7))]">
-        <Table className="min-w-[720px]">
-          <TableHeader className="bg-secondary/30">
-            <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Ticker</TableHead>
-              <TableHead>Side</TableHead>
-              <TableHead className="text-right">Quantity</TableHead>
-              <TableHead className="text-right">Price</TableHead>
-              <TableHead className="text-right">Currency</TableHead>
-              <TableHead className="hidden text-right lg:table-cell">
-                Fee
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  className="py-12 text-center text-muted-foreground"
-                  colSpan={7}
-                >
-                  Upload a confirmation above. Extracted rows land here.
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="font-medium tabular-nums">
-                    {row.date}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex min-w-0 flex-col gap-0.5">
-                      <span className="font-medium">{row.ticker}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {row.sourceFile}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={row.side === "BUY" ? "default" : "secondary"}
-                    >
-                      {row.side}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatNumber(row.quantity)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatNumber(row.price)}
-                  </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
-                    {row.currency ?? "-"}
-                  </TableCell>
-                  <TableCell className="hidden text-right tabular-nums lg:table-cell">
-                    {formatNumber(row.fee)}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+      <div className="surface-review overflow-hidden rounded-xl border border-secondary/35 bg-background/95">
+        {rows.length === 0 ? (
+          <div className="px-4 py-12 text-center text-muted-foreground">
+            Upload a confirmation above. Extracted rows land here.
+          </div>
+        ) : (
+          <>
+            <div className="space-y-3 p-3 md:hidden">
+              {rows.map((row) => (
+                <TradeSummaryCard key={row.id} row={row} />
+              ))}
+            </div>
+
+            <div className="hidden md:block">
+              <Table className="min-w-[720px]">
+                <TableHeader className="bg-secondary/30">
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Ticker</TableHead>
+                    <TableHead>Side</TableHead>
+                    <TableHead className="text-right">Quantity</TableHead>
+                    <TableHead className="text-right">Price</TableHead>
+                    <TableHead className="text-right">Currency</TableHead>
+                    <TableHead className="text-right">Fee</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-medium tabular-nums">
+                        {row.date}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span className="font-medium">{row.ticker}</span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {row.sourceFile}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={row.side === "BUY" ? "default" : "secondary"}
+                        >
+                          {row.side}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(row.quantity)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(row.price)}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {row.currency ?? "-"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(row.fee)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
       </div>
 
       {rows.length > 0 ? (
@@ -164,4 +210,6 @@ export function TradesTable({
       ) : null}
     </section>
   )
-}
+})
+
+TradesTable.displayName = "TradesTable"

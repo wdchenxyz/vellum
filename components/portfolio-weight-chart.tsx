@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { memo, useMemo, useState } from "react"
 
 import {
   ChartContainer,
@@ -53,12 +53,21 @@ const percentageFormatter = new Intl.NumberFormat("en-US", {
   style: "percent",
 })
 
+const currencyFormatters = new Map<string, Intl.NumberFormat>()
+
 function formatMoney(value: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    currency,
-    maximumFractionDigits: 2,
-    style: "currency",
-  }).format(value)
+  let formatter = currencyFormatters.get(currency)
+
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", {
+      currency,
+      maximumFractionDigits: 2,
+      style: "currency",
+    })
+    currencyFormatters.set(currency, formatter)
+  }
+
+  return formatter.format(value)
 }
 
 function formatPercent(value: number) {
@@ -191,7 +200,7 @@ function PortfolioWeightTooltip({
   )
 }
 
-export function PortfolioWeightChart({
+export const PortfolioWeightChart = memo(function PortfolioWeightChart({
   fxIssue,
   fxSnapshot,
   fxStatus,
@@ -424,4 +433,6 @@ export function PortfolioWeightChart({
       )}
     </div>
   )
-}
+})
+
+PortfolioWeightChart.displayName = "PortfolioWeightChart"

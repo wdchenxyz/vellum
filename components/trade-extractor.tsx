@@ -542,7 +542,7 @@ export function TradeExtractor() {
 
         <PromptInput
           accept={UPLOAD_ACCEPT}
-          className="[&>[data-slot=input-group]]:overflow-hidden [&>[data-slot=input-group]]:rounded-xl [&>[data-slot=input-group]]:border-primary/20 [&>[data-slot=input-group]]:bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(241,247,245,0.96))] [&>[data-slot=input-group]]:shadow-[0_1px_0_rgba(255,255,255,0.72)_inset,0_16px_34px_rgba(53,89,84,0.05)] dark:[&>[data-slot=input-group]]:bg-[linear-gradient(180deg,rgba(37,46,48,0.98),rgba(28,34,37,0.98))]"
+          className="trade-upload-surface [&>[data-slot=input-group]]:overflow-hidden [&>[data-slot=input-group]]:rounded-xl [&>[data-slot=input-group]]:border-primary/20"
           maxFiles={MAX_FILES}
           maxFileSize={MAX_FILE_SIZE_BYTES}
           multiple
@@ -567,7 +567,7 @@ export function TradeExtractor() {
               </span>
             </PromptInputTools>
             <PromptInputSubmit
-              className="shadow-[0_10px_24px_rgba(53,89,84,0.18)]"
+              className="shadow-primary-soft"
               disabled={status !== "ready"}
               size="sm"
               status={status}

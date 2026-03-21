@@ -1,3 +1,5 @@
+import { memo } from "react"
+
 import {
   type PortfolioCurrencyGroup,
   type PortfolioSummary,
@@ -30,6 +32,8 @@ const percentageFormatter = new Intl.NumberFormat("en-US", {
   style: "percent",
 })
 
+const currencyFormatters = new Map<string, Intl.NumberFormat>()
+
 function formatQuantity(value: number) {
   return quantityFormatter.format(value)
 }
@@ -47,12 +51,21 @@ function formatMoney(value: number | null, currency: string) {
     return "-"
   }
 
-  return new Intl.NumberFormat("en-US", {
-    currency,
-    maximumFractionDigits: 2,
-    style: "currency",
-  }).format(value)
+  let formatter = currencyFormatters.get(currency)
+
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", {
+      currency,
+      maximumFractionDigits: 2,
+      style: "currency",
+    })
+    currencyFormatters.set(currency, formatter)
+  }
+
+  return formatter.format(value)
 }
+
+type PortfolioHolding = PortfolioCurrencyGroup["holdings"][number]
 
 function getHoldingLabel(holding: PortfolioCurrencyGroup["holdings"][number]) {
   if (
@@ -169,7 +182,68 @@ function getBucketSurfaceClasses(currency: string) {
   }
 }
 
-export function HoldingsTable({
+function HoldingSummaryCard({ holding }: { holding: PortfolioHolding }) {
+  const label = getHoldingLabel(holding)
+
+  return (
+    <article className="rounded-lg border border-border/70 bg-background/80 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
+          <p className="font-medium text-foreground">{label.primary}</p>
+          {label.secondary ? (
+            <p className="truncate text-xs text-muted-foreground">
+              {label.secondary}
+            </p>
+          ) : null}
+          <p className="truncate text-xs text-muted-foreground">
+            {holding.market} · {holding.exchange ?? "Exchange pending"}
+          </p>
+        </div>
+
+        <div className="text-right">
+          <p className="font-medium tabular-nums">
+            {formatMoney(holding.marketValue, holding.currency)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {formatPercent(holding.weight)} weight
+          </p>
+        </div>
+      </div>
+
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+        <div>
+          <dt className="text-xs text-muted-foreground">Open qty</dt>
+          <dd className="tabular-nums">
+            {formatQuantity(holding.quantityOpen)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Avg cost</dt>
+          <dd className="tabular-nums">
+            {formatMoney(holding.averageCost, holding.currency)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Cost basis</dt>
+          <dd className="tabular-nums">
+            {formatMoney(holding.totalCostOpen, holding.currency)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Prev close</dt>
+          <dd className="tabular-nums">
+            {formatMoney(holding.previousClose, holding.currency)}
+          </dd>
+          <p className="text-xs text-muted-foreground">
+            {holding.previousCloseDate ?? holding.quoteError ?? "-"}
+          </p>
+        </div>
+      </dl>
+    </article>
+  )
+}
+
+export const HoldingsTable = memo(function HoldingsTable({
   fxIssue,
   fxSnapshot,
   fxStatus,
@@ -196,7 +270,7 @@ export function HoldingsTable({
   const summariesLabel = summaries.map(formatSummary).join(" • ")
 
   return (
-    <section className="overflow-hidden rounded-xl border border-secondary/30 bg-[linear-gradient(180deg,rgba(252,250,245,0.86),rgba(244,241,233,0.92))] dark:bg-[linear-gradient(180deg,rgba(38,35,31,0.32),rgba(22,27,30,0.82))]">
+    <section className="surface-analysis overflow-hidden rounded-xl border border-secondary/30 bg-background/80">
       <details className="group">
         <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-4 px-4 py-4 transition-colors hover:bg-secondary/10">
           <div className="space-y-1">
@@ -305,112 +379,129 @@ export function HoldingsTable({
                 <div
                   className={`overflow-hidden rounded-lg border ${getBucketSurfaceClasses(group.currency).surface}`}
                 >
-                  <Table className="min-w-[860px]">
-                    <TableHeader
-                      className={getBucketSurfaceClasses(group.currency).header}
-                    >
-                      <TableRow>
-                        <TableHead>Ticker</TableHead>
-                        <TableHead>Market</TableHead>
-                        <TableHead className="text-right">Open qty</TableHead>
-                        <TableHead className="text-right">Avg cost</TableHead>
-                        <TableHead className="text-right">Cost basis</TableHead>
-                        <TableHead className="text-right">Prev close</TableHead>
-                        <TableHead className="text-right">Value</TableHead>
-                        <TableHead className="text-right">Weight</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {group.holdings.map((holding) => {
-                        const label = getHoldingLabel(holding)
+                  <div className="space-y-3 p-3 md:hidden">
+                    {group.holdings.map((holding) => (
+                      <HoldingSummaryCard key={holding.key} holding={holding} />
+                    ))}
+                  </div>
 
-                        return (
-                          <TableRow key={holding.key}>
-                            <TableCell>
-                              <div className="flex min-w-0 flex-col gap-0.5">
-                                <span className="font-medium">
-                                  {label.primary}
-                                </span>
-                                {label.secondary ? (
-                                  <span className="truncate text-xs text-muted-foreground">
-                                    {label.secondary}
+                  <div className="hidden md:block">
+                    <Table className="min-w-[860px]">
+                      <TableHeader
+                        className={
+                          getBucketSurfaceClasses(group.currency).header
+                        }
+                      >
+                        <TableRow>
+                          <TableHead>Ticker</TableHead>
+                          <TableHead>Market</TableHead>
+                          <TableHead className="text-right">Open qty</TableHead>
+                          <TableHead className="text-right">Avg cost</TableHead>
+                          <TableHead className="text-right">
+                            Cost basis
+                          </TableHead>
+                          <TableHead className="text-right">
+                            Prev close
+                          </TableHead>
+                          <TableHead className="text-right">Value</TableHead>
+                          <TableHead className="text-right">Weight</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {group.holdings.map((holding) => {
+                          const label = getHoldingLabel(holding)
+
+                          return (
+                            <TableRow key={holding.key}>
+                              <TableCell>
+                                <div className="flex min-w-0 flex-col gap-0.5">
+                                  <span className="font-medium">
+                                    {label.primary}
                                   </span>
-                                ) : null}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex min-w-0 flex-col gap-0.5">
-                                <span className="font-medium">
-                                  {holding.market}
-                                </span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  {holding.exchange ?? "Exchange pending"}
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatQuantity(holding.quantityOpen)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatMoney(
-                                holding.averageCost,
-                                holding.currency
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatMoney(
-                                holding.totalCostOpen,
-                                holding.currency
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              <div className="flex flex-col items-end gap-0.5">
-                                <span>
-                                  {formatMoney(
-                                    holding.previousClose,
-                                    holding.currency
-                                  )}
-                                </span>
-                                <span className="text-xs text-muted-foreground">
-                                  {holding.previousCloseDate ??
-                                    holding.quoteError ??
-                                    "-"}
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatMoney(
-                                holding.marketValue,
-                                holding.currency
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatPercent(holding.weight)}
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                    <TableFooter>
-                      <TableRow>
-                        <TableCell className="font-medium" colSpan={4}>
-                          Total
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatMoney(group.totalCostOpen, group.currency)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          -
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatMoney(group.totalMarketValue, group.currency)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {group.totalMarketValue === null ? "-" : "100.00%"}
-                        </TableCell>
-                      </TableRow>
-                    </TableFooter>
-                  </Table>
+                                  {label.secondary ? (
+                                    <span className="truncate text-xs text-muted-foreground">
+                                      {label.secondary}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex min-w-0 flex-col gap-0.5">
+                                  <span className="font-medium">
+                                    {holding.market}
+                                  </span>
+                                  <span className="truncate text-xs text-muted-foreground">
+                                    {holding.exchange ?? "Exchange pending"}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatQuantity(holding.quantityOpen)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(
+                                  holding.averageCost,
+                                  holding.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(
+                                  holding.totalCostOpen,
+                                  holding.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span>
+                                    {formatMoney(
+                                      holding.previousClose,
+                                      holding.currency
+                                    )}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {holding.previousCloseDate ??
+                                      holding.quoteError ??
+                                      "-"}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(
+                                  holding.marketValue,
+                                  holding.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatPercent(holding.weight)}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                      <TableFooter>
+                        <TableRow>
+                          <TableCell className="font-medium" colSpan={4}>
+                            Total
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(group.totalCostOpen, group.currency)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            -
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(
+                              group.totalMarketValue,
+                              group.currency
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {group.totalMarketValue === null ? "-" : "100.00%"}
+                          </TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    </Table>
+                  </div>
                 </div>
 
                 {group.totalMarketValue === null ? (
@@ -425,4 +516,6 @@ export function HoldingsTable({
       </details>
     </section>
   )
-}
+})
+
+HoldingsTable.displayName = "HoldingsTable"
