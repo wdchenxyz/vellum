@@ -49,11 +49,19 @@ export const dailyValuePointSchema = z.object({
   value: z.number().finite(),
 })
 
+export const benchmarkSeriesSchema = z.object({
+  spx: z.array(dailyValuePointSchema).default([]),
+  twii: z.array(dailyValuePointSchema).default([]),
+})
+
 export const dailyValuesResponseSchema = z.object({
+  benchmarks: benchmarkSeriesSchema.default({ spx: [], twii: [] }),
+  costBasisTwd: z.number().finite().default(0),
   issues: z.array(z.string()).default([]),
   series: z.array(dailyValuePointSchema),
 })
 
+export type BenchmarkSeries = z.infer<typeof benchmarkSeriesSchema>
 export type DailyValuePoint = z.infer<typeof dailyValuePointSchema>
 export type DailyValuesResponse = z.infer<typeof dailyValuesResponseSchema>
 export type FxRateSnapshot = z.infer<typeof fxRateSnapshotSchema>

@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server"
 
-import { computeDailyValues } from "@/lib/portfolio/daily-values"
+import {
+  computeBenchmarkSeries,
+  computeDailyValues,
+} from "@/lib/portfolio/daily-values"
 import {
   aggregateHoldings,
   getQuoteLookupKey,
   inferSupportedMarket,
 } from "@/lib/portfolio/holdings"
+import type { BenchmarkSeries } from "@/lib/portfolio/schema"
 import type { DailyPriceSeries } from "@/lib/quotes/history-cache"
-import { fetchFxHistory, fetchTickerHistory } from "@/lib/quotes/history"
+import {
+  fetchBenchmarkHistory,
+  fetchFxHistory,
+  fetchTickerHistory,
+} from "@/lib/quotes/history"
 import { readStoredTradeRows } from "@/lib/trades/storage"
 
 export const dynamic = "force-dynamic"
@@ -117,8 +125,52 @@ export async function GET() {
 
     const series = computeDailyValues(trades, priceSeries, fxRates)
 
+    // Compute cash-flow-adjusted benchmark value series.
+    const tradingDates = series.map((point) => point.date)
+    let benchmarks: BenchmarkSeries = { spx: [], twii: [] }
+
+    try {
+      const rawBenchmarks = await fetchBenchmarkHistory(startDate)
+
+      benchmarks = {
+        spx: computeBenchmarkSeries(
+          trades,
+          rawBenchmarks.spx,
+          fxRates,
+          tradingDates,
+          true
+        ),
+        twii: computeBenchmarkSeries(
+          trades,
+          rawBenchmarks.twii,
+          fxRates,
+          tradingDates,
+          false
+        ),
+      }
+    } catch {
+      // Non-critical — chart still works without benchmarks.
+    }
+
+    // Compute cost basis in TWD using the same method as the summary card:
+    // aggregateHoldings cost * latest FX rate.
+    const fxDates = Object.keys(fxRates).sort()
+    const latestFxRate =
+      fxDates.length > 0 ? fxRates[fxDates[fxDates.length - 1]] : 0
+    let costBasisTwd = 0
+
+    for (const holding of holdings) {
+      const rate = holding.currency === "USD" ? latestFxRate : 1
+      costBasisTwd += holding.totalCostOpen * rate
+    }
+
     return NextResponse.json(
-      { series, issues: fetchIssues },
+      {
+        benchmarks,
+        costBasisTwd: Math.round(costBasisTwd),
+        series,
+        issues: fetchIssues,
+      },
       { headers: { "Cache-Control": "no-store" } }
     )
   } catch (error) {

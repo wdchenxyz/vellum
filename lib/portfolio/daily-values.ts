@@ -1,6 +1,7 @@
 import {
-  inferSupportedMarket,
+  getHoldingKey,
   getQuoteLookupKey,
+  inferSupportedMarket,
 } from "@/lib/portfolio/holdings"
 import type { DailyPriceSeries } from "@/lib/quotes/history-cache"
 import type { TradeTableRow } from "@/lib/trades/schema"
@@ -47,15 +48,40 @@ function collectTradingDates(
 }
 
 /**
+ * Sort trades by date with a stable tiebreaker on insertion order.
+ * Matches the sort behaviour of `sortTradesByDate` in holdings.ts so that
+ * BUY before SELL on the same date is deterministic.
+ */
+function stableSortTrades(trades: TradeTableRow[]) {
+  return trades
+    .map((trade, index) => ({ trade, index }))
+    .sort((a, b) => {
+      const byDate = a.trade.date.localeCompare(b.trade.date)
+
+      if (byDate !== 0) {
+        return byDate
+      }
+
+      return a.index - b.index
+    })
+}
+
+/**
  * Walk trades chronologically and produce a map of date -> position snapshot.
- * Only dates where a trade occurs get an entry; the caller carries forward.
+ *
+ * Positions are tracked **per account** (matching `aggregateHoldings`), then
+ * collapsed to per-quoteKey totals for each snapshot so the value chart shows
+ * the correct total portfolio quantity.
  */
 function buildTradeEvents(trades: TradeTableRow[]) {
-  const sorted = [...trades].sort((a, b) => a.date.localeCompare(b.date))
-  const positions = new Map<string, PositionEntry>()
+  // Per-account quantities — mirrors aggregateHoldings behaviour.
+  const accountPositions = new Map<
+    string,
+    { quoteKey: string; currency: string; quantity: number }
+  >()
   const events = new Map<string, Map<string, PositionEntry>>()
 
-  for (const trade of sorted) {
+  for (const { trade } of stableSortTrades(trades)) {
     const market = inferSupportedMarket({
       ticker: trade.ticker,
       currency: trade.currency,
@@ -66,19 +92,35 @@ function buildTradeEvents(trades: TradeTableRow[]) {
     }
 
     const quoteKey = getQuoteLookupKey({ ticker: trade.ticker, market })
-    const existing = positions.get(quoteKey)
+    const holdingKey = getHoldingKey({
+      account: trade.account,
+      ticker: trade.ticker,
+      market,
+    })
+    const currency = market === "TW" ? "TWD" : "USD"
+
+    const existing = accountPositions.get(holdingKey)
     const currentQty = existing?.quantity ?? 0
     const delta = trade.side === "BUY" ? trade.quantity : -trade.quantity
     const nextQty = Math.max(currentQty + delta, 0)
 
-    positions.set(quoteKey, {
-      currency: market === "TW" ? "TWD" : "USD",
-      quantity: nextQty,
-      quoteKey,
-    })
+    accountPositions.set(holdingKey, { quoteKey, currency, quantity: nextQty })
 
-    // Snapshot all current positions at this date.
-    events.set(trade.date, new Map(positions))
+    // Collapse per-account positions into per-quoteKey totals.
+    const collapsed = new Map<string, PositionEntry>()
+
+    for (const pos of accountPositions.values()) {
+      const existing = collapsed.get(pos.quoteKey)
+      const prevQty = existing?.quantity ?? 0
+
+      collapsed.set(pos.quoteKey, {
+        currency: pos.currency,
+        quantity: prevQty + pos.quantity,
+        quoteKey: pos.quoteKey,
+      })
+    }
+
+    events.set(trade.date, collapsed)
   }
 
   return events
@@ -110,6 +152,153 @@ function getLastKnownPrice(
 }
 
 /**
+ * Compute a cash-flow-adjusted benchmark value series.
+ *
+ * For every trade the user makes, the benchmark receives the same TWD cash
+ * flow but buys/sells benchmark units instead.  This way the only difference
+ * between the portfolio line and the benchmark line is investment returns —
+ * capital flows are identical.
+ *
+ * @param isUsd true if the benchmark is USD-denominated (e.g. SPY).
+ *              Its price is multiplied by the FX rate to get TWD.
+ *              false for TWD-denominated benchmarks (e.g. 0050).
+ */
+export function computeBenchmarkSeries(
+  trades: TradeTableRow[],
+  benchmarkPrices: DailyPriceSeries,
+  fxRates: DailyPriceSeries,
+  tradingDates: string[],
+  isUsd: boolean
+): DailyValuePoint[] {
+  if (trades.length === 0 || tradingDates.length === 0) {
+    return []
+  }
+
+  function getBenchmarkPriceTwd(date: string): number | null {
+    const rawPrice = getLastKnownPrice(benchmarkPrices, date)
+
+    if (rawPrice === null) {
+      return null
+    }
+
+    if (!isUsd) {
+      return rawPrice
+    }
+
+    const rate = getLastKnownPrice(fxRates, date)
+
+    return rate !== null ? rawPrice * rate : null
+  }
+
+  function getTradeCashFlowTwd(trade: TradeTableRow, date: string): number {
+    const currency = trade.currency?.trim().toUpperCase() ?? null
+
+    if (currency === "USD") {
+      const rate = getLastKnownPrice(fxRates, date)
+      return trade.totalAmount * (rate ?? 0)
+    }
+
+    return trade.totalAmount
+  }
+
+  // Sort trades chronologically with stable tiebreaker.
+  const sortedTrades = stableSortTrades(trades)
+  const earliestTradeDate =
+    sortedTrades.length > 0 ? sortedTrades[0].trade.date : null
+
+  // Walk trades and accumulate benchmark units.
+  let benchmarkUnits = 0
+  let tradeIdx = 0
+  let addedCostPoint = false
+
+  const series: DailyValuePoint[] = []
+
+  for (const date of tradingDates) {
+    // Apply any trades on or before this date — but only if the benchmark
+    // has a price on this date. Otherwise defer trades to the next date
+    // that has a price (so trades aren't silently dropped).
+    const benchPriceForTrades = getBenchmarkPriceTwd(date)
+
+    if (benchPriceForTrades !== null && benchPriceForTrades > 0) {
+      while (tradeIdx < sortedTrades.length) {
+        const { trade } = sortedTrades[tradeIdx]
+
+        if (trade.date > date) {
+          break
+        }
+
+        const cashTwd = getTradeCashFlowTwd(trade, date)
+        const unitsDelta = cashTwd / benchPriceForTrades
+
+        if (trade.side === "BUY") {
+          benchmarkUnits += unitsDelta
+        } else {
+          benchmarkUnits = Math.max(benchmarkUnits - unitsDelta, 0)
+        }
+
+        tradeIdx++
+      }
+    }
+
+    if (benchmarkUnits <= 0) {
+      continue
+    }
+
+    const priceTwd = getBenchmarkPriceTwd(date)
+
+    if (priceTwd !== null) {
+      const value = Math.round(benchmarkUnits * priceTwd)
+
+      // Insert synthetic cost-basis point before the first real value
+      // so the benchmark starts at the same value as the portfolio.
+      if (
+        !addedCostPoint &&
+        earliestTradeDate !== null &&
+        earliestTradeDate < date
+      ) {
+        const costTwd = computeTotalCostTwd(trades, fxRates, date)
+
+        if (costTwd > 0) {
+          series.push({ date: earliestTradeDate, value: Math.round(costTwd) })
+        }
+
+        addedCostPoint = true
+      }
+
+      series.push({ date, value })
+    }
+  }
+
+  return series
+}
+
+/**
+ * Compute the total cost basis in TWD from all trades.
+ * USD trades are converted using the FX rate on the given reference date.
+ */
+function computeTotalCostTwd(
+  trades: TradeTableRow[],
+  fxRates: DailyPriceSeries,
+  fxRefDate: string
+): number {
+  const rate = getLastKnownPrice(fxRates, fxRefDate) ?? 0
+  let total = 0
+
+  for (const trade of trades) {
+    const currency = trade.currency?.trim().toUpperCase() ?? null
+    const amount = trade.side === "BUY" ? trade.totalAmount : -trade.totalAmount
+
+    if (currency === "USD") {
+      total += amount * rate
+    } else {
+      total += amount
+    }
+  }
+
+  return Math.max(total, 0)
+}
+
+/**
  * Compute daily total portfolio value in TWD.
  *
  * - Walks every trading date from first trade to today.
@@ -137,6 +326,7 @@ export function computeDailyValues(
 
   const series: DailyValuePoint[] = []
   let currentPositions = new Map<string, PositionEntry>()
+  let addedCostPoint = false
 
   for (const date of dates) {
     // Apply any trades on or before this date that haven't been applied yet.
@@ -183,6 +373,21 @@ export function computeDailyValues(
     }
 
     if (hasAnyPrice) {
+      // Insert a synthetic cost-basis point just before the first real
+      // market-value point so the chart starts at the deployed capital.
+      if (!addedCostPoint && startDate <= date) {
+        const totalCostTwd = computeTotalCostTwd(trades, fxRates, date)
+
+        if (
+          totalCostTwd > 0 &&
+          Math.round(totalCostTwd) !== Math.round(totalTwd)
+        ) {
+          series.push({ date: startDate, value: Math.round(totalCostTwd) })
+        }
+
+        addedCostPoint = true
+      }
+
       series.push({ date, value: Math.round(totalTwd) })
     }
   }
