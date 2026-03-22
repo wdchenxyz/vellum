@@ -92,9 +92,11 @@ export async function POST(request: Request) {
     )
   }
 
+  const account = parsed.data.account ?? null
+
   const rows: TradeTableRow[] = results.flatMap((result) =>
     result.trades.map((trade) => ({
-      account: null,
+      account,
       currency: trade.currency,
       date: trade.date,
       id: crypto.randomUUID(),

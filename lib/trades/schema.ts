@@ -75,6 +75,7 @@ export const tradeFileSchema = z.object({
 })
 
 export const extractTradesRequestSchema = z.object({
+  account: z.string().trim().min(1).nullable().optional().default(null),
   prompt: z.string().max(1500).optional().default(""),
   files: z.array(tradeFileSchema).min(1).max(MAX_FILES),
 })
