@@ -16,6 +16,7 @@ import {
   fetchFxHistory,
   fetchTickerHistory,
 } from "@/lib/quotes/history"
+import { fetchUsdTwdFxSnapshot } from "@/lib/quotes/twelve-data"
 import { readStoredTradeRows } from "@/lib/trades/storage"
 
 export const dynamic = "force-dynamic"
@@ -63,10 +64,11 @@ export async function GET() {
     // Fetch historical prices + FX in parallel.
     const fetchIssues: string[] = []
 
-    const [fxRates, ...tickerResults] = await Promise.all([
+    const [fxRates, fxSnapshot, ...tickerResults] = await Promise.all([
       hasUsd
         ? fetchFxHistory(startDate)
         : Promise.resolve({} as DailyPriceSeries),
+      hasUsd ? fetchUsdTwdFxSnapshot() : Promise.resolve(null),
       ...[...uniqueTargets.values()].map(async (target) => {
         try {
           const prices = await fetchTickerHistory(target, startDate)
@@ -153,14 +155,12 @@ export async function GET() {
     }
 
     // Compute cost basis in TWD using the same method as the summary card:
-    // aggregateHoldings cost * latest FX rate.
-    const fxDates = Object.keys(fxRates).sort()
-    const latestFxRate =
-      fxDates.length > 0 ? fxRates[fxDates[fxDates.length - 1]] : 0
+    // aggregateHoldings cost * spot FX rate (1h TTL, matching the card).
+    const spotFxRate = fxSnapshot?.rate ?? 0
     let costBasisTwd = 0
 
     for (const holding of holdings) {
-      const rate = holding.currency === "USD" ? latestFxRate : 1
+      const rate = holding.currency === "USD" ? spotFxRate : 1
       costBasisTwd += holding.totalCostOpen * rate
     }
 

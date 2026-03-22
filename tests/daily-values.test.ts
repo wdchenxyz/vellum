@@ -214,4 +214,105 @@ describe("computeDailyValues", () => {
 
     expect(result).toEqual([])
   })
+
+  it("skips USD positions on dates before FX data exists", () => {
+    const trades = [
+      makeTrade({ date: "2026-03-01", ticker: "AAPL", quantity: 10 }),
+    ]
+
+    // Price data starts on 2026-03-03, but FX data only starts on 2026-03-05.
+    const prices = new Map([
+      ["US:AAPL", makePrices({ "2026-03-03": 100, "2026-03-05": 105 })],
+    ])
+    const fxRates = makePrices({ "2026-03-05": 32 })
+
+    const result = computeDailyValues(trades, prices, fxRates)
+
+    // On 2026-03-03 FX is null — USD position is skipped (no zero dip).
+    // The first point with a valid FX rate is 2026-03-05.
+    // A synthetic cost-basis point is inserted at the trade date using the
+    // first available FX rate.
+    expect(result).toEqual([
+      { date: "2026-03-01", value: Math.round(1000 * 32) },
+      { date: "2026-03-05", value: Math.round(10 * 105 * 32) },
+    ])
+  })
+
+  it("mixed USD + TWD portfolio with FX gap", () => {
+    const trades = [
+      makeTrade({ date: "2026-03-01", ticker: "AAPL", quantity: 10 }),
+      makeTrade({
+        date: "2026-03-01",
+        ticker: "0050",
+        quantity: 100,
+        currency: "TWD",
+      }),
+    ]
+
+    // Both have prices on 2026-03-03, but FX only available on 2026-03-05.
+    const prices = new Map([
+      ["US:AAPL", makePrices({ "2026-03-03": 100, "2026-03-05": 105 })],
+      ["TW:0050", makePrices({ "2026-03-03": 80, "2026-03-05": 82 })],
+    ])
+    const fxRates = makePrices({ "2026-03-05": 32 })
+
+    const result = computeDailyValues(trades, prices, fxRates)
+
+    // On 2026-03-03: USD position skipped (no FX), TWD position counted.
+    // On 2026-03-05: Both positions counted.
+    expect(result).toEqual([
+      { date: "2026-03-01", value: 1000 },
+      { date: "2026-03-03", value: 100 * 80 },
+      { date: "2026-03-05", value: Math.round(10 * 105 * 32 + 100 * 82) },
+    ])
+  })
+
+  it("synthetic cost point only includes trades up to the reference date", () => {
+    // Two purchases far apart in time (all dates in the past).
+    const trades = [
+      makeTrade({
+        date: "2025-01-10",
+        ticker: "AAPL",
+        quantity: 10,
+        totalAmount: 1000,
+      }),
+      makeTrade({
+        date: "2025-02-10",
+        ticker: "MSFT",
+        quantity: 5,
+        price: 200,
+        totalAmount: 1000,
+      }),
+    ]
+
+    const prices = new Map([
+      ["US:AAPL", makePrices({ "2025-01-13": 105, "2025-02-12": 110 })],
+      ["US:MSFT", makePrices({ "2025-02-12": 200 })],
+    ])
+    const fxRates = makePrices({
+      "2025-01-13": 32,
+      "2025-02-12": 33,
+    })
+
+    const result = computeDailyValues(trades, prices, fxRates)
+
+    // Synthetic cost point at startDate ("2025-01-10") should only count the
+    // AAPL trade (1000 * 32 = 32000), NOT the later MSFT trade.
+    expect(result[0]).toEqual({
+      date: "2025-01-10",
+      value: Math.round(1000 * 32),
+    })
+
+    // 2025-01-13: only AAPL position
+    expect(result[1]).toEqual({
+      date: "2025-01-13",
+      value: Math.round(10 * 105 * 32),
+    })
+
+    // 2025-02-12: both positions (AAPL + MSFT)
+    expect(result[2]).toEqual({
+      date: "2025-02-12",
+      value: Math.round(10 * 110 * 33 + 5 * 200 * 33),
+    })
+  })
 })

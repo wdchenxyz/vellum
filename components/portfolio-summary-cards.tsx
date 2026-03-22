@@ -77,6 +77,13 @@ function summarizeInTwd(
     (summary, holding) => {
       summary.holdingCount += 1
 
+      // Skip both cost and market value when market data is missing so
+      // the change calculation isn't skewed by orphaned cost entries.
+      if (holding.marketValue === null) {
+        summary.missingMarketCount += 1
+        return summary
+      }
+
       const costTwd =
         holding.currency === "TWD"
           ? holding.totalCostOpen
@@ -86,11 +93,6 @@ function summarizeInTwd(
         summary.convertibleCostTwd += costTwd
       } else if (holding.currency === "USD") {
         summary.needsFxCount += 1
-      }
-
-      if (holding.marketValue === null) {
-        summary.missingMarketCount += 1
-        return summary
       }
 
       const marketTwd =
