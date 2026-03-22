@@ -1,4 +1,5 @@
 import { ChatLayout } from "@/components/chat-drawer"
+import { PaletteToggle } from "@/components/palette-toggle"
 import { TradeExtractor } from "@/components/trade-extractor"
 
 export default function Page() {
@@ -6,11 +7,12 @@ export default function Page() {
     <ChatLayout>
       <main className="surface-page min-h-svh bg-background">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-4 py-8 sm:px-6 lg:py-12">
-          <section className="max-w-2xl">
+          <header className="flex items-center justify-between">
             <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
               Vellum
             </h1>
-          </section>
+            <PaletteToggle />
+          </header>
 
           <TradeExtractor />
         </div>

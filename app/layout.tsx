@@ -12,6 +12,9 @@ const fontMono = Geist_Mono({
   variable: "--font-mono",
 })
 
+/** Prevent flash of wrong palette on load — runs before paint */
+const paletteScript = `try{let p=localStorage.getItem("palette");if(p&&p!=="default")document.documentElement.setAttribute("data-palette",p)}catch(e){}`
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -23,6 +26,9 @@ export default function RootLayout({
       suppressHydrationWarning
       className={cn("antialiased", fontSans.variable, fontMono.variable)}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: paletteScript }} />
+      </head>
       <body className="min-h-svh bg-background text-foreground">
         <ThemeProvider>
           <TooltipProvider>{children}</TooltipProvider>
