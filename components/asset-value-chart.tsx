@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/chart"
 import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type { BenchmarkPrices, DailyValuePoint } from "@/lib/portfolio/schema"
+import type { BenchmarkSeries, DailyValuePoint } from "@/lib/portfolio/schema"
 import {
   Area,
   CartesianGrid,
@@ -113,10 +113,10 @@ function getCutoffDate(range: TimeRange): string | null {
   return now.toISOString().slice(0, 10)
 }
 
-function filterSeries(
-  series: DailyValuePoint[],
+function filterByRange<T extends { date: string }>(
+  series: T[],
   range: TimeRange
-): DailyValuePoint[] {
+): T[] {
   const cutoff = getCutoffDate(range)
 
   if (!cutoff) {
@@ -127,109 +127,30 @@ function filterSeries(
 }
 
 // -----------------------------------------------------------------------
-// Benchmark projection into TWD space
+// Chart data
 // -----------------------------------------------------------------------
 
-/**
- * Each point has:
- * - portfolio: real TWD value
- * - spx / twii: projected TWD value (starting from the same point as
- *   the portfolio, then moving proportionally to the index)
- * - spxPct / twiiPct: raw % change from start (for tooltip)
- */
 type ChartPoint = {
   date: string
   portfolio: number
   spx: number | null
-  spxPct: number | null
   twii: number | null
-  twiiPct: number | null
-}
-
-function getLastKnownValue(
-  prices: Record<string, number>,
-  date: string
-): number | null {
-  if (date in prices) {
-    return prices[date]
-  }
-
-  let best: string | null = null
-
-  for (const d of Object.keys(prices)) {
-    if (d <= date && (best === null || d > best)) {
-      best = d
-    }
-  }
-
-  return best ? prices[best] : null
-}
-
-/**
- * Convert a USD-denominated price to TWD using the daily FX rate.
- * Returns null if either value is unavailable.
- */
-function toTwd(
-  usdPrice: number | null,
-  fxRates: Record<string, number>,
-  date: string
-): number | null {
-  if (usdPrice === null) {
-    return null
-  }
-
-  const rate = getLastKnownValue(fxRates, date)
-
-  return rate !== null ? usdPrice * rate : null
 }
 
 function buildChartData(
-  filtered: DailyValuePoint[],
-  benchmarks: BenchmarkPrices,
-  fxRates: Record<string, number>
+  portfolio: DailyValuePoint[],
+  benchmarks: BenchmarkSeries
 ): ChartPoint[] {
-  if (filtered.length === 0) {
-    return []
-  }
+  // Index benchmark arrays by date for O(1) lookup.
+  const spxByDate = new Map(benchmarks.spx.map((p) => [p.date, p.value]))
+  const twiiByDate = new Map(benchmarks.twii.map((p) => [p.date, p.value]))
 
-  const basePortfolio = filtered[0].value
-  const baseDate = filtered[0].date
-
-  // SPX is USD-denominated — convert to TWD for apples-to-apples comparison.
-  const baseSpxTwd = toTwd(
-    getLastKnownValue(benchmarks.spx, baseDate),
-    fxRates,
-    baseDate
-  )
-  // 0050 is already TWD-denominated.
-  const baseTwii = getLastKnownValue(benchmarks.twii, baseDate)
-
-  return filtered.map((point) => {
-    const spxTwd = toTwd(
-      getLastKnownValue(benchmarks.spx, point.date),
-      fxRates,
-      point.date
-    )
-    const twiiVal = getLastKnownValue(benchmarks.twii, point.date)
-
-    const spxPct =
-      baseSpxTwd !== null && baseSpxTwd > 0 && spxTwd !== null
-        ? ((spxTwd - baseSpxTwd) / baseSpxTwd) * 100
-        : null
-    const twiiPct =
-      baseTwii !== null && baseTwii > 0 && twiiVal !== null
-        ? ((twiiVal - baseTwii) / baseTwii) * 100
-        : null
-
-    return {
-      date: point.date,
-      portfolio: point.value,
-      spx: spxPct !== null ? basePortfolio * (1 + spxPct / 100) : null,
-      spxPct,
-      twii: twiiPct !== null ? basePortfolio * (1 + twiiPct / 100) : null,
-      twiiPct,
-    }
-  })
+  return portfolio.map((point) => ({
+    date: point.date,
+    portfolio: point.value,
+    spx: spxByDate.get(point.date) ?? null,
+    twii: twiiByDate.get(point.date) ?? null,
+  }))
 }
 
 // -----------------------------------------------------------------------
@@ -286,18 +207,18 @@ function ChartPointTooltip({
         label="Portfolio"
         value={formatTwd(point.portfolio)}
       />
-      {point.spxPct !== null ? (
+      {point.spx !== null ? (
         <TooltipRow
           color="var(--color-spx)"
           label="S&P 500"
-          value={formatPercent(point.spxPct)}
+          value={formatTwd(point.spx)}
         />
       ) : null}
-      {point.twiiPct !== null ? (
+      {point.twii !== null ? (
         <TooltipRow
           color="var(--color-twii)"
           label="TAIEX"
-          value={formatPercent(point.twiiPct)}
+          value={formatTwd(point.twii)}
         />
       ) : null}
     </div>
@@ -309,9 +230,8 @@ function ChartPointTooltip({
 // -----------------------------------------------------------------------
 
 type AssetValueChartProps = {
-  benchmarks: BenchmarkPrices
+  benchmarks: BenchmarkSeries
   error: string | null
-  fxRates: Record<string, number>
   series: DailyValuePoint[]
   status: "idle" | "loading" | "ready" | "error"
 }
@@ -319,20 +239,27 @@ type AssetValueChartProps = {
 export const AssetValueChart = memo(function AssetValueChart({
   benchmarks,
   error,
-  fxRates,
   series,
   status,
 }: AssetValueChartProps) {
   const [range, setRange] = useState<TimeRange>("all")
 
   const filteredSeries = useMemo(
-    () => filterSeries(series, range),
+    () => filterByRange(series, range),
     [series, range]
   )
 
+  const filteredBenchmarks = useMemo(
+    () => ({
+      spx: filterByRange(benchmarks.spx, range),
+      twii: filterByRange(benchmarks.twii, range),
+    }),
+    [benchmarks, range]
+  )
+
   const chartData = useMemo(
-    () => buildChartData(filteredSeries, benchmarks, fxRates),
-    [filteredSeries, benchmarks, fxRates]
+    () => buildChartData(filteredSeries, filteredBenchmarks),
+    [filteredSeries, filteredBenchmarks]
   )
 
   const tickInterval = useMemo(
@@ -340,9 +267,7 @@ export const AssetValueChart = memo(function AssetValueChart({
     [chartData.length]
   )
 
-  const hasBenchmarks =
-    Object.keys(benchmarks.spx).length > 0 ||
-    Object.keys(benchmarks.twii).length > 0
+  const hasBenchmarks = benchmarks.spx.length > 0 || benchmarks.twii.length > 0
 
   const change = useMemo(() => {
     if (filteredSeries.length < 2) {
@@ -448,7 +373,7 @@ export const AssetValueChart = memo(function AssetValueChart({
                 />
                 Portfolio
               </span>
-              {Object.keys(benchmarks.spx).length > 0 ? (
+              {benchmarks.spx.length > 0 ? (
                 <span className="inline-flex items-center gap-1.5">
                   <span
                     className="size-2 rounded-full"
@@ -457,7 +382,7 @@ export const AssetValueChart = memo(function AssetValueChart({
                   S&P 500
                 </span>
               ) : null}
-              {Object.keys(benchmarks.twii).length > 0 ? (
+              {benchmarks.twii.length > 0 ? (
                 <span className="inline-flex items-center gap-1.5">
                   <span
                     className="size-2 rounded-full"
@@ -523,7 +448,7 @@ export const AssetValueChart = memo(function AssetValueChart({
                 strokeWidth={2}
                 type="monotone"
               />
-              {Object.keys(benchmarks.spx).length > 0 ? (
+              {benchmarks.spx.length > 0 ? (
                 <Line
                   dataKey="spx"
                   dot={false}
@@ -534,7 +459,7 @@ export const AssetValueChart = memo(function AssetValueChart({
                   type="monotone"
                 />
               ) : null}
-              {Object.keys(benchmarks.twii).length > 0 ? (
+              {benchmarks.twii.length > 0 ? (
                 <Line
                   dataKey="twii"
                   dot={false}

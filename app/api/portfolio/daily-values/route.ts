@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server"
 
-import { computeDailyValues } from "@/lib/portfolio/daily-values"
+import {
+  computeBenchmarkSeries,
+  computeDailyValues,
+} from "@/lib/portfolio/daily-values"
 import {
   aggregateHoldings,
   getQuoteLookupKey,
   inferSupportedMarket,
 } from "@/lib/portfolio/holdings"
-import type { BenchmarkPrices } from "@/lib/portfolio/schema"
+import type { BenchmarkSeries } from "@/lib/portfolio/schema"
 import type { DailyPriceSeries } from "@/lib/quotes/history-cache"
 import {
   fetchBenchmarkHistory,
@@ -122,17 +125,35 @@ export async function GET() {
 
     const series = computeDailyValues(trades, priceSeries, fxRates)
 
-    // Fetch benchmark indices in parallel (best-effort).
-    let benchmarks: BenchmarkPrices = { spx: {}, twii: {} }
+    // Compute cash-flow-adjusted benchmark value series.
+    const tradingDates = series.map((point) => point.date)
+    let benchmarks: BenchmarkSeries = { spx: [], twii: [] }
 
     try {
-      benchmarks = await fetchBenchmarkHistory(startDate)
+      const rawBenchmarks = await fetchBenchmarkHistory(startDate)
+
+      benchmarks = {
+        spx: computeBenchmarkSeries(
+          trades,
+          rawBenchmarks.spx,
+          fxRates,
+          tradingDates,
+          true
+        ),
+        twii: computeBenchmarkSeries(
+          trades,
+          rawBenchmarks.twii,
+          fxRates,
+          tradingDates,
+          false
+        ),
+      }
     } catch {
       // Non-critical — chart still works without benchmarks.
     }
 
     return NextResponse.json(
-      { benchmarks, fxRates, series, issues: fetchIssues },
+      { benchmarks, series, issues: fetchIssues },
       { headers: { "Cache-Control": "no-store" } }
     )
   } catch (error) {

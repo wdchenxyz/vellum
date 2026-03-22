@@ -28,7 +28,7 @@ import {
   applyPreviousCloseQuotes,
 } from "@/lib/portfolio/holdings"
 import {
-  type BenchmarkPrices,
+  type BenchmarkSeries,
   dailyValuesResponseSchema,
   type DailyValuePoint,
   fxRateResponseSchema,
@@ -227,11 +227,10 @@ export function TradeExtractor() {
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
   const [dailySeries, setDailySeries] = useState<DailyValuePoint[]>([])
-  const [dailyBenchmarks, setDailyBenchmarks] = useState<BenchmarkPrices>({
-    spx: {},
-    twii: {},
+  const [dailyBenchmarks, setDailyBenchmarks] = useState<BenchmarkSeries>({
+    spx: [],
+    twii: [],
   })
-  const [dailyFxRates, setDailyFxRates] = useState<Record<string, number>>({})
   const [dailyStatus, setDailyStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle")
@@ -477,7 +476,6 @@ export function TradeExtractor() {
 
         setDailySeries(parsed.data.series)
         setDailyBenchmarks(parsed.data.benchmarks)
-        setDailyFxRates(parsed.data.fxRates)
         setDailyIssue(
           parsed.data.issues.length > 0
             ? `Missing history for: ${parsed.data.issues.join("; ")}`
@@ -611,7 +609,6 @@ export function TradeExtractor() {
         <AssetValueChart
           benchmarks={dailyBenchmarks}
           error={dailyIssue}
-          fxRates={dailyFxRates}
           series={dailySeries}
           status={dailyStatus}
         />

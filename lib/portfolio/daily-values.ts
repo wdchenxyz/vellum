@@ -152,6 +152,105 @@ function getLastKnownPrice(
 }
 
 /**
+ * Compute a cash-flow-adjusted benchmark value series.
+ *
+ * For every trade the user makes, the benchmark receives the same TWD cash
+ * flow but buys/sells benchmark units instead.  This way the only difference
+ * between the portfolio line and the benchmark line is investment returns —
+ * capital flows are identical.
+ *
+ * @param isUsd true if the benchmark is USD-denominated (e.g. SPY).
+ *              Its price is multiplied by the FX rate to get TWD.
+ *              false for TWD-denominated benchmarks (e.g. 0050).
+ */
+export function computeBenchmarkSeries(
+  trades: TradeTableRow[],
+  benchmarkPrices: DailyPriceSeries,
+  fxRates: DailyPriceSeries,
+  tradingDates: string[],
+  isUsd: boolean
+): DailyValuePoint[] {
+  if (trades.length === 0 || tradingDates.length === 0) {
+    return []
+  }
+
+  function getBenchmarkPriceTwd(date: string): number | null {
+    const rawPrice = getLastKnownPrice(benchmarkPrices, date)
+
+    if (rawPrice === null) {
+      return null
+    }
+
+    if (!isUsd) {
+      return rawPrice
+    }
+
+    const rate = getLastKnownPrice(fxRates, date)
+
+    return rate !== null ? rawPrice * rate : null
+  }
+
+  function getTradeCashFlowTwd(trade: TradeTableRow, date: string): number {
+    const currency = trade.currency?.trim().toUpperCase() ?? null
+
+    if (currency === "USD") {
+      const rate = getLastKnownPrice(fxRates, date)
+      return trade.totalAmount * (rate ?? 0)
+    }
+
+    return trade.totalAmount
+  }
+
+  // Sort trades chronologically with stable tiebreaker.
+  const sortedTrades = stableSortTrades(trades)
+
+  // Walk trades and accumulate benchmark units.
+  let benchmarkUnits = 0
+  let tradeIdx = 0
+
+  const series: DailyValuePoint[] = []
+
+  for (const date of tradingDates) {
+    // Apply any trades on or before this date.
+    while (tradeIdx < sortedTrades.length) {
+      const { trade } = sortedTrades[tradeIdx]
+
+      if (trade.date > date) {
+        break
+      }
+
+      const tradeDate = trade.date
+      const benchPriceTwd = getBenchmarkPriceTwd(tradeDate)
+
+      if (benchPriceTwd !== null && benchPriceTwd > 0) {
+        const cashTwd = getTradeCashFlowTwd(trade, tradeDate)
+        const unitsDelta = cashTwd / benchPriceTwd
+
+        if (trade.side === "BUY") {
+          benchmarkUnits += unitsDelta
+        } else {
+          benchmarkUnits = Math.max(benchmarkUnits - unitsDelta, 0)
+        }
+      }
+
+      tradeIdx++
+    }
+
+    if (benchmarkUnits <= 0) {
+      continue
+    }
+
+    const priceTwd = getBenchmarkPriceTwd(date)
+
+    if (priceTwd !== null) {
+      series.push({ date, value: Math.round(benchmarkUnits * priceTwd) })
+    }
+  }
+
+  return series
+}
+
+/**
  * Compute daily total portfolio value in TWD.
  *
  * - Walks every trading date from first trade to today.
