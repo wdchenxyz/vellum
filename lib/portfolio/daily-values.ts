@@ -273,8 +273,8 @@ export function computeBenchmarkSeries(
 }
 
 /**
- * Compute the total cost basis in TWD from all trades.
- * USD trades are converted using the FX rate on the given reference date.
+ * Compute the total cost basis in TWD from trades on or before `fxRefDate`.
+ * USD trades are converted using the FX rate on the reference date.
  */
 function computeTotalCostTwd(
   trades: TradeTableRow[],
@@ -285,6 +285,10 @@ function computeTotalCostTwd(
   let total = 0
 
   for (const trade of trades) {
+    if (trade.date > fxRefDate) {
+      continue
+    }
+
     const currency = trade.currency?.trim().toUpperCase() ?? null
     const amount = trade.side === "BUY" ? trade.totalAmount : -trade.totalAmount
 
@@ -362,13 +366,18 @@ export function computeDailyValues(
         continue
       }
 
-      hasAnyPrice = true
       const nativeValue = position.quantity * price
 
       if (position.currency === "USD") {
-        totalTwd += nativeValue * (fxRate ?? 0)
+        // Skip USD positions when no FX rate is available — contributing
+        // zero would create artificial dips in the chart.
+        if (fxRate !== null) {
+          totalTwd += nativeValue * fxRate
+          hasAnyPrice = true
+        }
       } else {
         totalTwd += nativeValue
+        hasAnyPrice = true
       }
     }
 

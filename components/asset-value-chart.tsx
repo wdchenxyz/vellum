@@ -321,7 +321,7 @@ export const AssetValueChart = memo(function AssetValueChart({
     const ratio = base > 0 ? amount / base : null
 
     return { amount, ratio }
-  }, [filteredSeries])
+  }, [filteredSeries, range, costBasisTwd])
 
   if (status === "idle") {
     return null
