@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import {
   appendStoredTradeRows,
+  deleteStoredTradeRows,
   getTradeStoreFilePath,
   readStoredTradeRows,
 } from "@/lib/trades/storage"
@@ -71,6 +72,55 @@ describe("trade storage", () => {
       makeRow("row_1"),
       makeRow("row_2", { ticker: "MSFT" }),
     ])
+  })
+
+  it("deletes a single row by id", async () => {
+    const filePath = await createTempStorePath()
+
+    await appendStoredTradeRows(
+      [makeRow("row_1"), makeRow("row_2", { ticker: "MSFT" })],
+      filePath
+    )
+
+    const remaining = await deleteStoredTradeRows(["row_1"], filePath)
+
+    expect(remaining).toEqual([makeRow("row_2", { ticker: "MSFT" })])
+    expect(await readStoredTradeRows(filePath)).toEqual(remaining)
+  })
+
+  it("deletes multiple rows at once", async () => {
+    const filePath = await createTempStorePath()
+
+    await appendStoredTradeRows(
+      [
+        makeRow("row_1"),
+        makeRow("row_2", { ticker: "MSFT" }),
+        makeRow("row_3", { ticker: "GOOG" }),
+      ],
+      filePath
+    )
+
+    const remaining = await deleteStoredTradeRows(["row_1", "row_3"], filePath)
+
+    expect(remaining).toEqual([makeRow("row_2", { ticker: "MSFT" })])
+  })
+
+  it("returns all rows unchanged when deleting a non-existent id", async () => {
+    const filePath = await createTempStorePath()
+
+    await appendStoredTradeRows([makeRow("row_1")], filePath)
+
+    const remaining = await deleteStoredTradeRows(["no-such-id"], filePath)
+
+    expect(remaining).toEqual([makeRow("row_1")])
+  })
+
+  it("handles deleting from an empty store", async () => {
+    const filePath = await createTempStorePath()
+
+    const remaining = await deleteStoredTradeRows(["row_1"], filePath)
+
+    expect(remaining).toEqual([])
   })
 
   it("normalizes legacy rows without account or totalAmount", async () => {
