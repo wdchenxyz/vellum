@@ -93,9 +93,6 @@ export const TradesTable = memo(function TradesTable({
           <h2 className="text-lg font-medium tracking-tight">
             Review extracted trades
           </h2>
-          <p className="text-sm text-muted-foreground">
-            Confirm the typed rows before you move on to portfolio analysis.
-          </p>
         </div>
         <p className="text-sm text-secondary-foreground/80">
           {rows.length} {rows.length === 1 ? "row" : "rows"} saved
@@ -142,7 +139,7 @@ export const TradesTable = memo(function TradesTable({
       <div className="surface-review overflow-hidden rounded-xl border border-secondary/35 bg-background/95">
         {rows.length === 0 ? (
           <div className="px-4 py-12 text-center text-muted-foreground">
-            Upload a confirmation above. Extracted rows land here.
+            No trades yet.
           </div>
         ) : (
           <>
@@ -214,12 +211,6 @@ export const TradesTable = memo(function TradesTable({
           </>
         )}
       </div>
-
-      {rows.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Rows persist locally between refreshes.
-        </p>
-      ) : null}
     </section>
   )
 })

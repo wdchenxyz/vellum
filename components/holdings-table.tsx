@@ -2,10 +2,7 @@
 
 import { memo, useMemo, useState } from "react"
 
-import {
-  type PortfolioHoldingGroup,
-  type PortfolioSummary,
-} from "@/lib/portfolio/holdings"
+import { type PortfolioHoldingGroup } from "@/lib/portfolio/holdings"
 import type { FxRateSnapshot, SupportedMarket } from "@/lib/portfolio/schema"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -263,7 +260,7 @@ function buildWeightChartView({
     .sort()
     .map((account) => ({ label: account, value: account }))
   const marketOptions = [...new Set(holdings.map((holding) => holding.market))]
-    .sort()
+    .sort((a, b) => (a === "US" ? -1 : b === "US" ? 1 : a.localeCompare(b)))
     .map((market) => ({
       label: market === "US" ? "US market" : "TW market",
       value: market,
@@ -342,29 +339,6 @@ function buildWeightChartView({
   }
 }
 
-function formatSummary(
-  summary: PortfolioSummary,
-  fxSnapshot: FxRateSnapshot | null
-) {
-  if (summary.currencies.length !== 1) {
-    return `${summary.label} mixed`
-  }
-
-  const currency = summary.currencies[0]
-
-  if (summary.totalMarketValue === null) {
-    return `${summary.label} pending`
-  }
-
-  if (currency === "USD" && fxSnapshot) {
-    const convertedValue = summary.totalMarketValue * fxSnapshot.rate
-
-    return `${summary.label} ${formatMoney(summary.totalMarketValue, currency)} (${formatMoney(convertedValue, "TWD")})`
-  }
-
-  return `${summary.label} ${formatMoney(summary.totalMarketValue, currency)}`
-}
-
 function getGroupSummary(
   group: PortfolioHoldingGroup,
   fxSnapshot: FxRateSnapshot | null
@@ -394,29 +368,6 @@ function getGroupSummary(
   }
 
   return `${holdingLabel} • total value ${formatMoney(group.totalMarketValue, group.currencies[0])}.`
-}
-
-function getPortfolioStatusCopy({
-  holdingCount,
-  status,
-}: {
-  holdingCount: number
-  status: QuoteLoadStatus
-}) {
-  if (holdingCount === 0) {
-    return "Open holdings appear after imported buys and sells net out."
-  }
-
-  switch (status) {
-    case "loading":
-      return "Loading previous closes for the current holdings."
-    case "error":
-      return "Previous-close data is partially unavailable."
-    case "ready":
-      return "Previous-close data is ready for the current holdings."
-    default:
-      return "Open when you want a valuation view."
-  }
 }
 
 function getGroupAccentCurrency(group: PortfolioHoldingGroup) {
@@ -546,8 +497,6 @@ export const HoldingsTable = memo(function HoldingsTable({
   fxStatus,
   groups,
   holdings,
-  summaries,
-  status,
   issues,
   requestError,
 }: {
@@ -556,8 +505,6 @@ export const HoldingsTable = memo(function HoldingsTable({
   fxStatus: QuoteLoadStatus
   groups: PortfolioHoldingGroup[]
   holdings: PortfolioHolding[]
-  summaries: PortfolioSummary[]
-  status: QuoteLoadStatus
   issues: string[]
   requestError: string | null
 }) {
@@ -581,14 +528,10 @@ export const HoldingsTable = memo(function HoldingsTable({
       }),
     [holdings, selectedAccount, selectedMarket, weightChartMode]
   )
-  const summariesLabel = summaries
-    .map((summary) => formatSummary(summary, fxSnapshot))
-    .join(" • ")
-
   return (
     <section className="surface-analysis overflow-hidden rounded-xl border border-secondary/30 bg-background/80">
       <details className="group">
-        <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-4 px-4 py-4 transition-colors hover:bg-secondary/10">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-secondary/10">
           <div className="space-y-1">
             <p className="text-xs font-medium tracking-[0.16em] text-secondary-foreground uppercase">
               Analyze
@@ -596,21 +539,13 @@ export const HoldingsTable = memo(function HoldingsTable({
             <h2 className="text-lg font-medium tracking-tight">
               Portfolio analysis
             </h2>
-            <p className="max-w-2xl text-sm text-muted-foreground">
-              {getPortfolioStatusCopy({ holdingCount, status })}
-            </p>
           </div>
 
-          <div className="flex items-start gap-3">
-            <div className="text-right">
-              <p className="text-sm font-medium text-foreground">
-                {holdingCount} {holdingCount === 1 ? "holding" : "holdings"}
-              </p>
-              <p className="max-w-72 text-xs text-muted-foreground">
-                {summariesLabel || "No open holdings yet."}
-              </p>
-            </div>
-            <ChevronDown className="mt-0.5 size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          <div className="flex items-center gap-3">
+            <p className="text-sm font-medium text-foreground">
+              {holdingCount} {holdingCount === 1 ? "holding" : "holdings"}
+            </p>
+            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
           </div>
         </summary>
 
@@ -646,16 +581,8 @@ export const HoldingsTable = memo(function HoldingsTable({
 
             {holdings.length > 0 ? (
               <section className="rounded-lg border border-primary/20 bg-accent/30 px-4 py-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <h3 className="text-sm font-medium">Weight chart</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Switch scope to review overall concentration, account
-                      sleeves, or market exposure.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-2 md:items-end">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start">
+                  <div className="flex flex-col gap-2 md:items-start">
                     <ToggleGroup
                       onValueChange={(value) => {
                         if (value) {
@@ -964,12 +891,6 @@ export const HoldingsTable = memo(function HoldingsTable({
                     </Table>
                   </div>
                 </div>
-
-                {group.totalMarketValue === null ? (
-                  <p className="text-xs text-muted-foreground">
-                    Weights use priced holdings only while quotes are pending.
-                  </p>
-                ) : null}
               </section>
             ))}
           </div>
