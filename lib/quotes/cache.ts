@@ -38,7 +38,7 @@ const EMPTY_QUOTE_CACHE: QuoteCache = {
 }
 
 export const PREVIOUS_CLOSE_CACHE_TTL_MS = 12 * 60 * 60 * 1000
-export const FX_CACHE_TTL_MS = 60 * 60 * 1000
+export const FX_CACHE_TTL_MS = 12 * 60 * 60 * 1000
 
 export function getQuoteCacheFilePath(rootDirectory = process.cwd()) {
   return process.env.QUOTE_CACHE_FILE_PATH
