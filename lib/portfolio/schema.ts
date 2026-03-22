@@ -50,6 +50,7 @@ export const dailyValuePointSchema = z.object({
 })
 
 export const dailyValuesResponseSchema = z.object({
+  issues: z.array(z.string()).default([]),
   series: z.array(dailyValuePointSchema),
 })
 

@@ -470,6 +470,11 @@ export function TradeExtractor() {
         }
 
         setDailySeries(parsed.data.series)
+        setDailyIssue(
+          parsed.data.issues.length > 0
+            ? `Missing history for: ${parsed.data.issues.join("; ")}`
+            : null
+        )
         setDailyStatus("ready")
       } catch (error) {
         if (cancelled) {

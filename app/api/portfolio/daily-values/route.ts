@@ -53,6 +53,8 @@ export async function GET() {
     const hasUsd = holdings.some((holding) => holding.currency === "USD")
 
     // Fetch historical prices + FX in parallel.
+    const fetchIssues: string[] = []
+
     const [fxRates, ...tickerResults] = await Promise.all([
       hasUsd
         ? fetchFxHistory(startDate)
@@ -61,8 +63,10 @@ export async function GET() {
         try {
           const prices = await fetchTickerHistory(target, startDate)
           return { key: target.key, prices }
-        } catch {
-          // If one ticker fails, skip it rather than failing the whole chart.
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error"
+          fetchIssues.push(`${target.key}: ${message}`)
           return { key: target.key, prices: {} as DailyPriceSeries }
         }
       }),
@@ -71,7 +75,9 @@ export async function GET() {
     const priceSeries = new Map<string, DailyPriceSeries>()
 
     for (const result of tickerResults) {
-      priceSeries.set(result.key, result.prices)
+      if (Object.keys(result.prices).length > 0) {
+        priceSeries.set(result.key, result.prices)
+      }
     }
 
     // Also build quoteKey mappings from the raw trades (to handle Chinese
@@ -112,7 +118,7 @@ export async function GET() {
     const series = computeDailyValues(trades, priceSeries, fxRates)
 
     return NextResponse.json(
-      { series },
+      { series, issues: fetchIssues },
       { headers: { "Cache-Control": "no-store" } }
     )
   } catch (error) {
