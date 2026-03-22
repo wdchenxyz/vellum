@@ -13,7 +13,7 @@ const fontMono = Geist_Mono({
 })
 
 /** Prevent flash of wrong palette on load — runs before paint */
-const paletteScript = `try{let p=localStorage.getItem("palette");if(p&&p!=="default")document.documentElement.setAttribute("data-palette",p)}catch(e){}`
+const paletteScript = `try{let p=localStorage.getItem("palette")||"ink";if(p!=="default")document.documentElement.setAttribute("data-palette",p)}catch(e){}`
 
 export default function RootLayout({
   children,
