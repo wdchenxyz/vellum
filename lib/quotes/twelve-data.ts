@@ -76,7 +76,7 @@ function countryMatchesMarket(
   return normalizedCountry === "UNITED STATES" || normalizedCountry === "US"
 }
 
-function getAuthorizationHeader() {
+export function getAuthorizationHeader() {
   const apiKey = process.env.TWELVEDATA_API_KEY
 
   if (!apiKey) {
@@ -86,7 +86,7 @@ function getAuthorizationHeader() {
   return `apikey ${apiKey}`
 }
 
-function buildTwelveDataUrl(
+export function buildTwelveDataUrl(
   pathname: string,
   params: Record<string, string | undefined>
 ) {
@@ -113,7 +113,7 @@ function getMicPriority(market: SupportedMarket) {
   return market === "TW" ? TW_MIC_PRIORITY : US_MIC_PRIORITY
 }
 
-function parseDecimal(value: string) {
+export function parseDecimal(value: string) {
   const parsed = Number(value)
 
   if (!Number.isFinite(parsed)) {
@@ -123,7 +123,7 @@ function parseDecimal(value: string) {
   return parsed
 }
 
-async function fetchTwelveDataJson(
+export async function fetchTwelveDataJson(
   pathname: string,
   params: Record<string, string | undefined>,
   fetcher: typeof fetch
