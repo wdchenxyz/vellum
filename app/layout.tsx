@@ -24,12 +24,11 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
+      data-palette="ink"
       className={cn("antialiased", fontSans.variable, fontMono.variable)}
     >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: paletteScript }} />
-      </head>
       <body className="min-h-svh bg-background text-foreground">
+        <script dangerouslySetInnerHTML={{ __html: paletteScript }} />
         <ThemeProvider>
           <TooltipProvider>{children}</TooltipProvider>
         </ThemeProvider>
