@@ -219,11 +219,12 @@ export function computeBenchmarkSeries(
         break
       }
 
-      const tradeDate = trade.date
-      const benchPriceTwd = getBenchmarkPriceTwd(tradeDate)
+      // Use the current trading date's price (not the literal trade date)
+      // because the trade date may fall on a weekend/holiday with no data.
+      const benchPriceTwd = getBenchmarkPriceTwd(date)
 
       if (benchPriceTwd !== null && benchPriceTwd > 0) {
-        const cashTwd = getTradeCashFlowTwd(trade, tradeDate)
+        const cashTwd = getTradeCashFlowTwd(trade, date)
         const unitsDelta = cashTwd / benchPriceTwd
 
         if (trade.side === "BUY") {
