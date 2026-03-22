@@ -529,7 +529,7 @@ export const HoldingsTable = memo(function HoldingsTable({
     [holdings, selectedAccount, selectedMarket, weightChartMode]
   )
   return (
-    <section className="surface-analysis overflow-hidden rounded-xl border border-secondary/30 bg-background/80">
+    <section className="surface-analysis overflow-hidden rounded-xl border border-border/70 bg-background/80">
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-secondary/10">
           <div className="space-y-1">
