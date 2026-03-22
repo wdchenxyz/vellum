@@ -244,17 +244,17 @@ export function TradeExtractor() {
     () => applyPreviousCloseQuotes(aggregatedPortfolio.holdings, quotesByKey),
     [aggregatedPortfolio.holdings, quotesByKey]
   )
-  const hasUsdBucket = valuedPortfolio.groups.some(
-    (group) => group.currency === "USD"
+  const hasUsdBucket = valuedPortfolio.groups.some((group) =>
+    group.currencies.includes("USD")
   )
-  const hasTwdBucket = valuedPortfolio.groups.some(
-    (group) => group.currency === "TWD"
+  const hasTwdBucket = valuedPortfolio.groups.some((group) =>
+    group.currencies.includes("TWD")
   )
   const needsUsdTwdFxSnapshot = hasUsdBucket && hasTwdBucket
   const missingQuoteTargets = useMemo(
     () =>
       aggregatedPortfolio.holdings
-        .filter((holding) => !quotesByKey[holding.key])
+        .filter((holding) => !quotesByKey[holding.quoteKey])
         .map((holding) => ({
           market: holding.market,
           ticker: holding.ticker,
@@ -591,6 +591,7 @@ export function TradeExtractor() {
           fxSnapshot={fxSnapshot}
           fxStatus={fxStatus}
           groups={valuedPortfolio.groups}
+          holdings={valuedPortfolio.holdings}
           issues={aggregatedPortfolio.issues}
           requestError={quoteRequestIssue}
           status={quoteStatus}

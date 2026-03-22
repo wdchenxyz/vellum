@@ -4,6 +4,8 @@ import { MAX_FILES } from "@/lib/trades/constants"
 
 export const tradeSideSchema = z.enum(["BUY", "SELL"])
 
+const tradeAccountSchema = z.string().trim().min(1).nullable()
+
 export const extractedTradeSchema = z.object({
   date: z
     .string()
@@ -46,6 +48,25 @@ export const extractedTradesEnvelopeSchema = z.object({
     .describe("Every distinct trade transaction found in the uploaded file."),
 })
 
+export function computeTradeTotalAmount({
+  fee,
+  price,
+  quantity,
+  side,
+}: {
+  fee: number | null
+  price: number
+  quantity: number
+  side: z.infer<typeof tradeSideSchema>
+}) {
+  const baseAmount = quantity * price
+  const signedFee = fee ?? 0
+  const totalAmount =
+    side === "BUY" ? baseAmount + signedFee : baseAmount - signedFee
+
+  return Number(totalAmount.toFixed(8))
+}
+
 export const tradeFileSchema = z.object({
   type: z.literal("file"),
   url: z.string().min(1),
@@ -64,10 +85,73 @@ export const fileExtractionResultSchema = z.object({
   error: z.string().nullable().optional(),
 })
 
-export const tradeTableRowSchema = extractedTradeSchema.extend({
+const tradeTableRowBaseSchema = extractedTradeSchema
+  .omit({ fee: true })
+  .extend({
+    account: tradeAccountSchema,
+    totalAmount: z
+      .number()
+      .finite()
+      .nonnegative()
+      .describe("Final trade amount including fees or commission."),
+  })
+
+const legacyTradeTableRowSchema = extractedTradeSchema.extend({
+  account: tradeAccountSchema.optional(),
   id: z.string().min(1),
   sourceFile: z.string().min(1),
 })
+
+const accountlessTradeTableRowSchema = tradeTableRowBaseSchema.extend({
+  account: tradeAccountSchema.optional(),
+  id: z.string().min(1),
+  sourceFile: z.string().min(1),
+})
+
+export const tradeTableRowSchema = tradeTableRowBaseSchema.extend({
+  id: z.string().min(1),
+  sourceFile: z.string().min(1),
+})
+
+export function normalizeTradeTableRow(
+  row:
+    | z.infer<typeof legacyTradeTableRowSchema>
+    | z.infer<typeof accountlessTradeTableRowSchema>
+    | TradeTableRow
+): TradeTableRow {
+  if ("totalAmount" in row) {
+    return {
+      ...row,
+      account: row.account ?? null,
+    }
+  }
+
+  return {
+    account: row.account ?? null,
+    currency: row.currency,
+    date: row.date,
+    id: row.id,
+    price: row.price,
+    quantity: row.quantity,
+    side: row.side,
+    sourceFile: row.sourceFile,
+    ticker: row.ticker,
+    totalAmount: computeTradeTotalAmount({
+      fee: row.fee,
+      price: row.price,
+      quantity: row.quantity,
+      side: row.side,
+    }),
+  }
+}
+
+export const storedTradeRowSchema = z
+  .union([
+    tradeTableRowSchema,
+    accountlessTradeTableRowSchema,
+    legacyTradeTableRowSchema,
+  ])
+  .transform(normalizeTradeTableRow)
 
 export const extractTradesResponseSchema = z.object({
   results: z.array(fileExtractionResultSchema),

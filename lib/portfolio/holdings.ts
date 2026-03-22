@@ -5,17 +5,20 @@ import type {
 
 export type PortfolioTradeRow = {
   id: string
+  account: string | null
   date: string
   ticker: string
   quantity: number
   price: number
   currency: string | null
-  fee: number | null
+  totalAmount: number
   side: "BUY" | "SELL"
 }
 
 export type AggregatedHolding = {
   key: string
+  quoteKey: string
+  account: string | null
   ticker: string
   market: SupportedMarket
   currency: string
@@ -35,18 +38,22 @@ export type ValuedHolding = AggregatedHolding & {
   quoteError: string | null
 }
 
-export type PortfolioCurrencyGroup = {
-  currency: string
+export type PortfolioHoldingGroup = {
+  account: string | null
+  label: string
+  currencies: string[]
   holdings: ValuedHolding[]
-  totalCostOpen: number
+  totalCostOpen: number | null
   totalMarketValue: number | null
   missingPriceCount: number
 }
 
 export type PortfolioSummary = {
-  currency: string
+  account: string | null
+  label: string
+  currencies: string[]
   holdingCount: number
-  totalCostOpen: number
+  totalCostOpen: number | null
   totalMarketValue: number | null
   missingPriceCount: number
 }
@@ -74,6 +81,15 @@ function normalizeTicker(ticker: string) {
 
 function normalizeCurrency(currency: string | null) {
   return currency?.trim().toUpperCase() ?? null
+}
+
+function normalizeAccount(account: string | null | undefined) {
+  const normalized = account?.trim()
+  return normalized ? normalized : null
+}
+
+function getAccountLabel(account: string | null) {
+  return account ?? "Unassigned account"
 }
 
 function getDefaultCurrency(market: SupportedMarket) {
@@ -105,7 +121,11 @@ function mergeCanonicalHoldings(holdings: ValuedHolding[]) {
   for (const holding of holdings) {
     const canonicalKey =
       holding.market === "TW" && holding.quoteTicker
-        ? getHoldingKey({ market: holding.market, ticker: holding.quoteTicker })
+        ? getHoldingKey({
+            account: holding.account,
+            market: holding.market,
+            ticker: holding.quoteTicker,
+          })
         : holding.key
     const existing = merged.get(canonicalKey)
 
@@ -130,6 +150,7 @@ function mergeCanonicalHoldings(holdings: ValuedHolding[]) {
 
     merged.set(canonicalKey, {
       ...existing,
+      account: existing.account,
       averageCost:
         quantityOpen > 0 ? roundNumber(totalCostOpen / quantityOpen) : 0,
       currency: existing.currency,
@@ -141,6 +162,7 @@ function mergeCanonicalHoldings(holdings: ValuedHolding[]) {
         existing.previousCloseDate ?? holding.previousCloseDate,
       quantityOpen,
       quoteError: existing.quoteError ?? holding.quoteError,
+      quoteKey: existing.quoteKey,
       quoteTicker: existing.quoteTicker ?? holding.quoteTicker,
       ticker: prefersDescriptiveTaiwanLabel(existing.ticker, holding.ticker)
         ? holding.ticker
@@ -154,6 +176,23 @@ function mergeCanonicalHoldings(holdings: ValuedHolding[]) {
 }
 
 export function getHoldingKey({
+  account,
+  ticker,
+  market,
+}: {
+  account?: string | null
+  ticker: string
+  market: SupportedMarket
+}) {
+  const quoteKey = getQuoteLookupKey({ ticker, market })
+  const normalizedAccount = normalizeAccount(account)
+
+  return normalizedAccount
+    ? `${quoteKey}:${normalizedAccount.toUpperCase()}`
+    : quoteKey
+}
+
+export function getQuoteLookupKey({
   ticker,
   market,
 }: {
@@ -230,6 +269,7 @@ export function aggregateHoldings(trades: PortfolioTradeRow[]) {
 
     const expectedCurrency = getDefaultCurrency(market)
     const normalizedCurrency = normalizeCurrency(trade.currency)
+    const account = normalizeAccount(trade.account)
 
     if (normalizedCurrency && normalizedCurrency !== expectedCurrency) {
       issues.push(
@@ -238,9 +278,12 @@ export function aggregateHoldings(trades: PortfolioTradeRow[]) {
       continue
     }
 
-    const key = getHoldingKey({ ticker, market })
+    const quoteKey = getQuoteLookupKey({ ticker, market })
+    const key = getHoldingKey({ account, ticker, market })
     const current = positions.get(key) ?? {
+      account,
       key,
+      quoteKey,
       ticker,
       market,
       currency: expectedCurrency,
@@ -251,8 +294,7 @@ export function aggregateHoldings(trades: PortfolioTradeRow[]) {
 
     if (trade.side === "BUY") {
       const nextQuantity = current.quantityOpen + trade.quantity
-      const nextCost =
-        current.totalCostOpen + trade.quantity * trade.price + (trade.fee ?? 0)
+      const nextCost = current.totalCostOpen + trade.totalAmount
 
       positions.set(key, {
         ...current,
@@ -304,6 +346,10 @@ export function aggregateHoldings(trades: PortfolioTradeRow[]) {
       return left.market.localeCompare(right.market)
     }
 
+    if ((left.account ?? "") !== (right.account ?? "")) {
+      return (left.account ?? "").localeCompare(right.account ?? "")
+    }
+
     return left.ticker.localeCompare(right.ticker)
   })
 
@@ -315,7 +361,7 @@ export function applyPreviousCloseQuotes(
   quotesByKey: Record<string, PreviousCloseQuote>
 ) {
   const enriched = holdings.map<ValuedHolding>((holding) => {
-    const quote = quotesByKey[holding.key]
+    const quote = quotesByKey[holding.quoteKey]
     const currency = normalizeCurrency(quote?.currency) ?? holding.currency
     const previousClose = quote?.previousClose ?? null
     const marketValue =
@@ -338,38 +384,50 @@ export function applyPreviousCloseQuotes(
   })
   const canonicalHoldings = mergeCanonicalHoldings(enriched)
 
-  const groupsByCurrency = new Map<string, ValuedHolding[]>()
+  const groupsByAccount = new Map<string, ValuedHolding[]>()
 
   for (const holding of canonicalHoldings) {
-    const group = groupsByCurrency.get(holding.currency) ?? []
+    const groupKey = getAccountLabel(holding.account)
+    const group = groupsByAccount.get(groupKey) ?? []
     group.push(holding)
-    groupsByCurrency.set(holding.currency, group)
+    groupsByAccount.set(groupKey, group)
   }
 
-  const groups: PortfolioCurrencyGroup[] = []
+  const groups: PortfolioHoldingGroup[] = []
   const summaries: PortfolioSummary[] = []
 
-  for (const [currency, currencyHoldings] of groupsByCurrency.entries()) {
-    const totalCostOpen = roundNumber(
-      currencyHoldings.reduce((sum, holding) => sum + holding.totalCostOpen, 0)
-    )
-    const missingPriceCount = currencyHoldings.filter(
+  for (const [label, accountHoldings] of groupsByAccount.entries()) {
+    const currencies = [
+      ...new Set(accountHoldings.map((holding) => holding.currency)),
+    ].sort(compareCurrency)
+    const singleCurrency = currencies.length === 1 ? currencies[0] : null
+    const totalCostOpen = singleCurrency
+      ? roundNumber(
+          accountHoldings.reduce(
+            (sum, holding) => sum + holding.totalCostOpen,
+            0
+          )
+        )
+      : null
+    const missingPriceCount = accountHoldings.filter(
       (holding) => holding.marketValue === null
     ).length
     const pricedMarketValueTotal = roundNumber(
-      currencyHoldings.reduce(
+      accountHoldings.reduce(
         (sum, holding) => sum + (holding.marketValue ?? 0),
         0
       )
     )
     const totalMarketValue =
-      missingPriceCount > 0 ? null : pricedMarketValueTotal
+      singleCurrency && missingPriceCount === 0 ? pricedMarketValueTotal : null
 
-    const holdingsWithWeight = currencyHoldings
+    const holdingsWithWeight = accountHoldings
       .map((holding) => ({
         ...holding,
         weight:
-          pricedMarketValueTotal > 0 && holding.marketValue !== null
+          singleCurrency &&
+          pricedMarketValueTotal > 0 &&
+          holding.marketValue !== null
             ? roundNumber(holding.marketValue / pricedMarketValueTotal, 6)
             : null,
       }))
@@ -394,30 +452,36 @@ export function applyPreviousCloseQuotes(
           return left.market.localeCompare(right.market)
         }
 
+        if ((left.account ?? "") !== (right.account ?? "")) {
+          return (left.account ?? "").localeCompare(right.account ?? "")
+        }
+
         return left.ticker.localeCompare(right.ticker)
       })
 
     groups.push({
-      currency,
+      account: holdingsWithWeight[0]?.account ?? null,
+      currencies,
       holdings: holdingsWithWeight,
+      label,
       totalCostOpen,
       totalMarketValue,
       missingPriceCount,
     })
 
     summaries.push({
-      currency,
+      account: holdingsWithWeight[0]?.account ?? null,
+      currencies,
       holdingCount: holdingsWithWeight.length,
+      label,
       totalCostOpen,
       totalMarketValue,
       missingPriceCount,
     })
   }
 
-  groups.sort((left, right) => compareCurrency(left.currency, right.currency))
-  summaries.sort((left, right) =>
-    compareCurrency(left.currency, right.currency)
-  )
+  groups.sort((left, right) => left.label.localeCompare(right.label))
+  summaries.sort((left, right) => left.label.localeCompare(right.label))
 
-  return { groups, summaries }
+  return { groups, holdings: canonicalHoldings, summaries }
 }

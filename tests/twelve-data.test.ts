@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
@@ -59,13 +63,28 @@ describe("selectInstrumentMatch", () => {
 
 describe("fetchPreviousCloseSnapshots", () => {
   const originalApiKey = process.env.TWELVEDATA_API_KEY
+  const originalQuoteCacheFilePath = process.env.QUOTE_CACHE_FILE_PATH
+  const tempDirectories: string[] = []
 
-  beforeEach(() => {
+  async function createTempQuoteCacheFilePath() {
+    const directory = await mkdtemp(path.join(tmpdir(), "vellum-quotes-"))
+    tempDirectories.push(directory)
+    return path.join(directory, "quote-cache.json")
+  }
+
+  beforeEach(async () => {
     process.env.TWELVEDATA_API_KEY = "test-key"
+    process.env.QUOTE_CACHE_FILE_PATH = await createTempQuoteCacheFilePath()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     process.env.TWELVEDATA_API_KEY = originalApiKey
+    process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
+    await Promise.all(
+      tempDirectories
+        .splice(0)
+        .map((directory) => rm(directory, { force: true, recursive: true }))
+    )
   })
 
   it("resolves previous close prices for US and Taiwan holdings", async () => {
@@ -340,17 +359,78 @@ describe("fetchPreviousCloseSnapshots", () => {
       },
     ])
   })
+
+  it("reuses cached previous close quotes across repeated loads", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = input.toString()
+
+      if (url.includes("/symbol_search?") && url.includes("symbol=AAPL")) {
+        return Response.json({
+          data: [
+            {
+              country: "United States",
+              currency: "USD",
+              exchange: "NASDAQ",
+              mic_code: "XNAS",
+              symbol: "AAPL",
+            },
+          ],
+          status: "ok",
+        })
+      }
+
+      if (url.includes("/eod?") && url.includes("symbol=AAPL")) {
+        return Response.json({
+          close: "150.25",
+          currency: "USD",
+          datetime: "2026-03-17",
+          exchange: "NASDAQ",
+          mic_code: "XNAS",
+          symbol: "AAPL",
+        })
+      }
+
+      throw new Error(`Unexpected URL ${url}`)
+    })
+
+    const first = await fetchPreviousCloseSnapshots(
+      [{ market: "US", ticker: "AAPL" }],
+      fetchMock as typeof fetch
+    )
+    const second = await fetchPreviousCloseSnapshots(
+      [{ market: "US", ticker: "AAPL" }],
+      fetchMock as typeof fetch
+    )
+
+    expect(first).toEqual(second)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe("fetchUsdTwdFxSnapshot", () => {
   const originalApiKey = process.env.TWELVEDATA_API_KEY
+  const originalQuoteCacheFilePath = process.env.QUOTE_CACHE_FILE_PATH
+  const tempDirectories: string[] = []
 
-  beforeEach(() => {
+  async function createTempQuoteCacheFilePath() {
+    const directory = await mkdtemp(path.join(tmpdir(), "vellum-fx-"))
+    tempDirectories.push(directory)
+    return path.join(directory, "quote-cache.json")
+  }
+
+  beforeEach(async () => {
     process.env.TWELVEDATA_API_KEY = "test-key"
+    process.env.QUOTE_CACHE_FILE_PATH = await createTempQuoteCacheFilePath()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     process.env.TWELVEDATA_API_KEY = originalApiKey
+    process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
+    await Promise.all(
+      tempDirectories
+        .splice(0)
+        .map((directory) => rm(directory, { force: true, recursive: true }))
+    )
   })
 
   it("loads the USD/TWD previous close from Twelve Data", async () => {
@@ -369,5 +449,21 @@ describe("fetchUsdTwdFxSnapshot", () => {
       pair: "USD/TWD",
       rate: 31.95997,
     })
+  })
+
+  it("reuses the cached USD/TWD snapshot across repeated loads", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        close: "31.95997",
+        datetime: "2026-03-16",
+        symbol: "USD/TWD",
+      })
+    )
+
+    const first = await fetchUsdTwdFxSnapshot(fetchMock as typeof fetch)
+    const second = await fetchUsdTwdFxSnapshot(fetchMock as typeof fetch)
+
+    expect(first).toEqual(second)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

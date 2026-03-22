@@ -3,10 +3,10 @@ import "server-only"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 
-import { tradeTableRowSchema, type TradeTableRow } from "@/lib/trades/schema"
+import { storedTradeRowSchema, type TradeTableRow } from "@/lib/trades/schema"
 import { z } from "zod"
 
-const storedTradeRowsSchema = z.array(tradeTableRowSchema)
+const storedTradeRowsSchema = z.array(storedTradeRowSchema)
 
 let writeQueue = Promise.resolve()
 

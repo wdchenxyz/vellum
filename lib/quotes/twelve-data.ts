@@ -1,6 +1,12 @@
 import "server-only"
 
 import { getHoldingKey, inferSupportedMarket } from "@/lib/portfolio/holdings"
+import {
+  getCachedFxSnapshot,
+  getCachedPreviousCloseQuotes,
+  setCachedFxSnapshot,
+  setCachedPreviousCloseQuotes,
+} from "@/lib/quotes/cache"
 import { fetchTaiwanPreviousClose } from "@/lib/quotes/taiwan-prices"
 import { resolveTaiwanTickerByName } from "@/lib/quotes/taiwan-symbols"
 import type {
@@ -307,8 +313,10 @@ export async function fetchPreviousCloseSnapshots(
   targets: PreviousCloseLookupTarget[],
   fetcher: typeof fetch = fetch
 ): Promise<PreviousCloseQuote[]> {
-  return Promise.all(
-    targets.map(async (target) => {
+  const { missingTargets, quotesByKey } =
+    await getCachedPreviousCloseQuotes(targets)
+  const fetchedQuotes = await Promise.all(
+    missingTargets.map(async (target) => {
       try {
         return await fetchPreviousClose(target, fetcher)
       } catch (error) {
@@ -326,9 +334,26 @@ export async function fetchPreviousCloseSnapshots(
       }
     })
   )
+
+  await setCachedPreviousCloseQuotes(fetchedQuotes)
+
+  for (const quote of fetchedQuotes) {
+    quotesByKey[quote.key] = quote
+  }
+
+  return targets.map((target) => {
+    const key = getHoldingKey({ market: target.market, ticker: target.ticker })
+    return quotesByKey[key]
+  })
 }
 
 export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
+  const cachedSnapshot = await getCachedFxSnapshot("USD/TWD")
+
+  if (cachedSnapshot) {
+    return cachedSnapshot
+  }
+
   const payload = await fetchTwelveDataJson(
     "/eod",
     {
@@ -342,9 +367,13 @@ export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
     throw new Error("Twelve Data returned an invalid USD/TWD response.")
   }
 
-  return {
+  const snapshot = {
     asOf: parsed.data.datetime ?? null,
     pair: "USD/TWD",
     rate: parseDecimal(parsed.data.close),
   }
+
+  await setCachedFxSnapshot(snapshot)
+
+  return snapshot
 }
