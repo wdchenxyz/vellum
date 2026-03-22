@@ -121,14 +121,15 @@ function applyPalette(value: PaletteValue) {
 }
 
 function PaletteToggle() {
-  const [palette, setPalette] = useState<PaletteValue>("default")
+  const [palette, setPalette] = useState<PaletteValue>("ink")
   const [mounted, setMounted] = useState(false)
   const { resolvedTheme, theme, setTheme } = useTheme()
 
   useEffect(() => {
     setMounted(true)
-    const stored = localStorage.getItem("palette") || "default"
-    setPalette(stored as PaletteValue)
+    const stored = (localStorage.getItem("palette") || "ink") as PaletteValue
+    setPalette(stored)
+    applyPalette(stored)
   }, [])
 
   function selectPalette(value: string) {
@@ -155,7 +156,10 @@ function PaletteToggle() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuLabel>Mode</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
+        <DropdownMenuRadioGroup
+          value={theme ?? "system"}
+          onValueChange={setTheme}
+        >
           {(
             [
               { value: "light", icon: Sun, label: "Light" },
