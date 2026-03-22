@@ -1,6 +1,7 @@
 import {
-  inferSupportedMarket,
+  getHoldingKey,
   getQuoteLookupKey,
+  inferSupportedMarket,
 } from "@/lib/portfolio/holdings"
 import type { DailyPriceSeries } from "@/lib/quotes/history-cache"
 import type { TradeTableRow } from "@/lib/trades/schema"
@@ -47,15 +48,40 @@ function collectTradingDates(
 }
 
 /**
+ * Sort trades by date with a stable tiebreaker on insertion order.
+ * Matches the sort behaviour of `sortTradesByDate` in holdings.ts so that
+ * BUY before SELL on the same date is deterministic.
+ */
+function stableSortTrades(trades: TradeTableRow[]) {
+  return trades
+    .map((trade, index) => ({ trade, index }))
+    .sort((a, b) => {
+      const byDate = a.trade.date.localeCompare(b.trade.date)
+
+      if (byDate !== 0) {
+        return byDate
+      }
+
+      return a.index - b.index
+    })
+}
+
+/**
  * Walk trades chronologically and produce a map of date -> position snapshot.
- * Only dates where a trade occurs get an entry; the caller carries forward.
+ *
+ * Positions are tracked **per account** (matching `aggregateHoldings`), then
+ * collapsed to per-quoteKey totals for each snapshot so the value chart shows
+ * the correct total portfolio quantity.
  */
 function buildTradeEvents(trades: TradeTableRow[]) {
-  const sorted = [...trades].sort((a, b) => a.date.localeCompare(b.date))
-  const positions = new Map<string, PositionEntry>()
+  // Per-account quantities — mirrors aggregateHoldings behaviour.
+  const accountPositions = new Map<
+    string,
+    { quoteKey: string; currency: string; quantity: number }
+  >()
   const events = new Map<string, Map<string, PositionEntry>>()
 
-  for (const trade of sorted) {
+  for (const { trade } of stableSortTrades(trades)) {
     const market = inferSupportedMarket({
       ticker: trade.ticker,
       currency: trade.currency,
@@ -66,19 +92,35 @@ function buildTradeEvents(trades: TradeTableRow[]) {
     }
 
     const quoteKey = getQuoteLookupKey({ ticker: trade.ticker, market })
-    const existing = positions.get(quoteKey)
+    const holdingKey = getHoldingKey({
+      account: trade.account,
+      ticker: trade.ticker,
+      market,
+    })
+    const currency = market === "TW" ? "TWD" : "USD"
+
+    const existing = accountPositions.get(holdingKey)
     const currentQty = existing?.quantity ?? 0
     const delta = trade.side === "BUY" ? trade.quantity : -trade.quantity
     const nextQty = Math.max(currentQty + delta, 0)
 
-    positions.set(quoteKey, {
-      currency: market === "TW" ? "TWD" : "USD",
-      quantity: nextQty,
-      quoteKey,
-    })
+    accountPositions.set(holdingKey, { quoteKey, currency, quantity: nextQty })
 
-    // Snapshot all current positions at this date.
-    events.set(trade.date, new Map(positions))
+    // Collapse per-account positions into per-quoteKey totals.
+    const collapsed = new Map<string, PositionEntry>()
+
+    for (const pos of accountPositions.values()) {
+      const existing = collapsed.get(pos.quoteKey)
+      const prevQty = existing?.quantity ?? 0
+
+      collapsed.set(pos.quoteKey, {
+        currency: pos.currency,
+        quantity: prevQty + pos.quantity,
+        quoteKey: pos.quoteKey,
+      })
+    }
+
+    events.set(trade.date, collapsed)
   }
 
   return events
