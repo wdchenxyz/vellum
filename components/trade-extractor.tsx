@@ -10,10 +10,6 @@ import {
 } from "@/components/ai-elements/attachments"
 import {
   PromptInput,
-  PromptInputActionAddAttachments,
-  PromptInputActionMenu,
-  PromptInputActionMenuContent,
-  PromptInputActionMenuTrigger,
   PromptInputBody,
   PromptInputFooter,
   PromptInputHeader,
@@ -36,17 +32,8 @@ import {
   type PreviousCloseQuote,
 } from "@/lib/portfolio/schema"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  DEFAULT_MODEL,
   MAX_BATCH_SIZE_LABEL,
   MAX_FILE_SIZE_BYTES,
   MAX_FILE_SIZE_LABEL,
@@ -59,8 +46,8 @@ import {
   type ExtractTradesResponse,
   type TradeTableRow,
 } from "@/lib/trades/schema"
-import { Bot, FileImage, FileText, Sparkles, TriangleAlert } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { ChevronDown, Paperclip, TriangleAlert } from "lucide-react"
+import { useEffect, useId, useMemo, useState } from "react"
 
 function pluralize(value: number, singular: string, plural = `${singular}s`) {
   return value === 1 ? singular : plural
@@ -71,7 +58,7 @@ function formatPromptInputError(
 ) {
   switch (code) {
     case "accept":
-      return "Only images and PDF files are supported in this MVP."
+      return "Only images and PDF files are supported."
     case "max_file_size":
       return `Each file must stay under ${MAX_FILE_SIZE_LABEL}.`
     case "max_files":
@@ -89,38 +76,96 @@ function getErrorMessage(error: unknown) {
   return "The request failed."
 }
 
-function AttachmentChips() {
+function BrowseFilesButton() {
   const attachments = usePromptInputAttachments()
 
-  if (attachments.files.length === 0) {
-    return (
-      <p className="px-1 text-xs text-muted-foreground">
-        Drop screenshots, confirmations, or statement PDFs directly into this
-        box.
-      </p>
-    )
-  }
+  return (
+    <Button
+      className="border-primary/20 bg-primary/5 text-primary hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
+      onClick={() => attachments.openFileDialog()}
+      size="sm"
+      type="button"
+      variant="outline"
+    >
+      <Paperclip className="size-4" />
+      Choose files
+    </Button>
+  )
+}
+
+function AttachmentTray() {
+  const attachments = usePromptInputAttachments()
+  const fileCount = attachments.files.length
 
   return (
     <div className="flex w-full flex-col gap-2">
-      <p className="px-1 text-xs text-muted-foreground">
-        Ready to parse {attachments.files.length}{" "}
-        {pluralize(attachments.files.length, "file")}
-      </p>
-      <Attachments variant="inline">
-        {attachments.files.map((attachment) => (
-          <Attachment
-            data={attachment}
-            key={attachment.id}
-            onRemove={() => attachments.remove(attachment.id)}
-          >
-            <AttachmentPreview />
-            <AttachmentInfo />
-            <AttachmentRemove />
-          </Attachment>
-        ))}
-      </Attachments>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-primary">
+            {fileCount === 0
+              ? "Drop screenshots or PDFs here."
+              : `Ready to extract ${fileCount} ${pluralize(fileCount, "file")}.`}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {fileCount === 0
+              ? "Drag files into this box or browse from your device."
+              : "Remove anything you do not want to process before submitting."}
+          </p>
+        </div>
+        <BrowseFilesButton />
+      </div>
+
+      {fileCount > 0 ? (
+        <Attachments variant="inline">
+          {attachments.files.map((attachment) => (
+            <Attachment
+              data={attachment}
+              key={attachment.id}
+              onRemove={() => attachments.remove(attachment.id)}
+            >
+              <AttachmentPreview />
+              <AttachmentInfo />
+              <AttachmentRemove />
+            </Attachment>
+          ))}
+        </Attachments>
+      ) : null}
     </div>
+  )
+}
+
+function OptionalNote() {
+  const textareaId = useId()
+  const descriptionId = `${textareaId}-description`
+
+  return (
+    <details className="group border-t border-border/70 bg-secondary/15 px-4 py-3">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-secondary-foreground">
+        <span>
+          Add context note{" "}
+          <span className="font-normal text-muted-foreground">Optional</span>
+        </span>
+        <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
+      <label
+        className="mt-2 block text-sm font-medium text-foreground"
+        htmlFor={textareaId}
+      >
+        Context note
+      </label>
+      <p
+        className="mt-1 max-w-2xl text-sm text-muted-foreground"
+        id={descriptionId}
+      >
+        Use this only when the document needs extra context.
+      </p>
+      <PromptInputTextarea
+        aria-describedby={descriptionId}
+        className="mt-3 min-h-20"
+        id={textareaId}
+        placeholder="Example: ignore account summary totals and extract only filled trades."
+      />
+    </details>
   )
 }
 
@@ -457,128 +502,101 @@ export function TradeExtractor() {
   }
 
   return (
-    <div className="grid gap-6">
-      <Card className="border-border/70 bg-card/85 shadow-sm backdrop-blur-sm">
-        <CardHeader className="gap-3">
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">MVP</Badge>
-            <Badge variant="outline">AI Gateway</Badge>
-            <Badge variant="outline">{DEFAULT_MODEL}</Badge>
-            <Badge variant="outline">Multi-trade per file</Badge>
-          </div>
-          <CardTitle>Upload confirmations</CardTitle>
-          <CardDescription className="max-w-2xl leading-6">
-            Add an optional note if the document needs context, then drop images
-            or PDFs into the prompt box. Each file can yield multiple typed
-            trade rows.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {successMessage ? (
-            <Alert>
-              <Sparkles className="size-4" />
-              <AlertTitle>Batch imported</AlertTitle>
-              <AlertDescription>{successMessage}</AlertDescription>
-            </Alert>
-          ) : null}
+    <div className="grid gap-8">
+      <section className="space-y-4">
+        <div className="space-y-1">
+          <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
+            Ingest
+          </p>
+          <h2 className="text-lg font-medium tracking-tight">
+            Add confirmations
+          </h2>
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+            Start with the files. Add a note only when the document needs extra
+            context.
+          </p>
+        </div>
 
-          {restoreIssue ? (
-            <Alert variant="destructive">
-              <TriangleAlert className="size-4" />
-              <AlertTitle>Saved transactions unavailable</AlertTitle>
-              <AlertDescription>{restoreIssue}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {uploadIssue && issues.length === 0 ? (
-            <Alert variant="destructive">
-              <TriangleAlert className="size-4" />
-              <AlertTitle>Upload blocked</AlertTitle>
-              <AlertDescription>{uploadIssue}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {issues.length > 0 ? (
-            <Alert variant="destructive">
-              <TriangleAlert className="size-4" />
-              <AlertTitle>Some files need review</AlertTitle>
-              <AlertDescription>
+        {uploadIssue ? (
+          <Alert
+            className="border-destructive/30 bg-destructive/5"
+            variant="destructive"
+          >
+            <TriangleAlert className="size-4" />
+            <AlertTitle>
+              {issues.length > 0 ? "Review these files" : "Upload blocked"}
+            </AlertTitle>
+            <AlertDescription>
+              {issues.length > 0 ? (
                 <div className="flex flex-col gap-1">
                   {issues.map((issue) => (
                     <p key={issue}>{issue}</p>
                   ))}
                 </div>
-              </AlertDescription>
-            </Alert>
-          ) : null}
+              ) : (
+                uploadIssue
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
-          <PromptInput
-            accept={UPLOAD_ACCEPT}
-            className="[&>[data-slot=input-group]]:rounded-2xl [&>[data-slot=input-group]]:border-dashed [&>[data-slot=input-group]]:border-border/80 [&>[data-slot=input-group]]:bg-background/95 [&>[data-slot=input-group]]:shadow-[0_1px_0_rgba(255,255,255,0.45)_inset]"
-            maxFiles={MAX_FILES}
-            maxFileSize={MAX_FILE_SIZE_BYTES}
-            multiple
-            onError={(error) => {
-              setUploadIssue(formatPromptInputError(error.code))
-              setIssues([])
-              setSuccessMessage(null)
-            }}
-            onSubmit={handleSubmit}
-          >
-            <PromptInputHeader>
-              <AttachmentChips />
-            </PromptInputHeader>
-            <PromptInputBody>
-              <PromptInputTextarea placeholder="Optional note: for example, 'extract the filled trades and ignore the account summary totals'." />
-            </PromptInputBody>
-            <PromptInputFooter>
-              <PromptInputTools className="flex-wrap">
-                <PromptInputActionMenu>
-                  <PromptInputActionMenuTrigger tooltip="Add images or PDFs" />
-                  <PromptInputActionMenuContent>
-                    <PromptInputActionAddAttachments />
-                  </PromptInputActionMenuContent>
-                </PromptInputActionMenu>
-                <span className="px-1 text-xs text-muted-foreground">
-                  Shift+Enter adds a new line.
-                </span>
-              </PromptInputTools>
-              <PromptInputSubmit
-                disabled={status !== "ready"}
-                status={status}
-              />
-            </PromptInputFooter>
-          </PromptInput>
-        </CardContent>
-        <CardFooter className="flex-wrap justify-between gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <FileImage className="size-4" />
-            <span>
-              Up to {MAX_FILES} files per batch, {MAX_FILE_SIZE_LABEL} each
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <FileText className="size-4" />
-            <span>{MAX_BATCH_SIZE_LABEL} total payload per request</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Bot className="size-4" />
-            <span>{rows.length} saved rows currently loaded</span>
-          </div>
-        </CardFooter>
-      </Card>
+        <PromptInput
+          accept={UPLOAD_ACCEPT}
+          inputGroupClassName="surface-upload rounded-xl border-primary/20"
+          maxFiles={MAX_FILES}
+          maxFileSize={MAX_FILE_SIZE_BYTES}
+          multiple
+          onError={(error) => {
+            setUploadIssue(formatPromptInputError(error.code))
+            setIssues([])
+            setSuccessMessage(null)
+          }}
+          onSubmit={handleSubmit}
+        >
+          <PromptInputHeader className="px-4 py-4">
+            <AttachmentTray />
+          </PromptInputHeader>
+          <PromptInputBody>
+            <OptionalNote />
+          </PromptInputBody>
+          <PromptInputFooter className="border-t border-border/70 bg-secondary/15 px-4 py-3">
+            <PromptInputTools>
+              <span className="text-xs text-secondary-foreground/80">
+                {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
+                {MAX_BATCH_SIZE_LABEL} total
+              </span>
+            </PromptInputTools>
+            <PromptInputSubmit
+              className="shadow-primary-soft"
+              disabled={status !== "ready"}
+              size="sm"
+              status={status}
+            >
+              {status === "ready" ? "Extract trades" : "Extracting..."}
+            </PromptInputSubmit>
+          </PromptInputFooter>
+        </PromptInput>
+      </section>
 
-      <TradesTable rows={rows} />
-      <HoldingsTable
-        fxIssue={fxIssue}
-        fxSnapshot={fxSnapshot}
-        fxStatus={fxStatus}
-        groups={valuedPortfolio.groups}
-        issues={aggregatedPortfolio.issues}
-        requestError={quoteRequestIssue}
-        status={quoteStatus}
-        summaries={valuedPortfolio.summaries}
+      <TradesTable
+        issues={successMessage ? issues : []}
+        restoreIssue={restoreIssue}
+        rows={rows}
+        successMessage={successMessage}
       />
+
+      {rows.length > 0 ? (
+        <HoldingsTable
+          fxIssue={fxIssue}
+          fxSnapshot={fxSnapshot}
+          fxStatus={fxStatus}
+          groups={valuedPortfolio.groups}
+          issues={aggregatedPortfolio.issues}
+          requestError={quoteRequestIssue}
+          status={quoteStatus}
+          summaries={valuedPortfolio.summaries}
+        />
+      ) : null}
     </div>
   )
 }

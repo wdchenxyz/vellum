@@ -210,8 +210,8 @@ export const Attachment = ({
           "group relative",
           variant === "grid" && "size-24 overflow-hidden rounded-lg",
           variant === "inline" && [
-            "flex h-8 cursor-pointer items-center gap-1.5 select-none",
-            "rounded-md border border-border px-1.5",
+            "flex min-h-11 cursor-pointer items-center gap-2 select-none",
+            "rounded-md border border-border px-2 py-1 md:min-h-8 md:gap-1.5 md:px-1.5 md:py-0",
             "text-sm font-medium transition-all",
             "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
           ],
@@ -268,7 +268,7 @@ export const AttachmentPreview = ({
       className={cn(
         "flex shrink-0 items-center justify-center overflow-hidden",
         variant === "grid" && "size-full bg-muted",
-        variant === "inline" && "size-5 rounded bg-background",
+        variant === "inline" && "size-6 rounded bg-background md:size-5",
         variant === "list" && "size-12 rounded bg-muted",
         className
       )}
@@ -351,9 +351,8 @@ export const AttachmentRemove = ({
           "[&>svg]:size-3",
         ],
         variant === "inline" && [
-          "size-5 rounded p-0",
-          "opacity-0 transition-opacity group-hover:opacity-100",
-          "[&>svg]:size-2.5",
+          "size-11 rounded p-0 opacity-100 md:size-8",
+          "transition-colors [&>svg]:size-4 md:[&>svg]:size-3",
         ],
         variant === "list" && ["size-8 shrink-0 rounded p-0", "[&>svg]:size-4"],
         className

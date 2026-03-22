@@ -496,6 +496,7 @@ export type PromptInputProps = Omit<
   globalDrop?: boolean
   // Render a hidden input with given name and keep it in sync for native form posts. Default false.
   syncHiddenInput?: boolean
+  inputGroupClassName?: string
   // Minimal constraints
   maxFiles?: number
   // bytes
@@ -512,6 +513,7 @@ export type PromptInputProps = Omit<
 
 export const PromptInput = ({
   className,
+  inputGroupClassName,
   accept,
   multiple,
   globalDrop,
@@ -924,7 +926,9 @@ export const PromptInput = ({
         ref={formRef}
         {...props}
       >
-        <InputGroup className="overflow-hidden">{children}</InputGroup>
+        <InputGroup className={cn("overflow-hidden", inputGroupClassName)}>
+          {children}
+        </InputGroup>
       </form>
     </>
   )
@@ -1244,6 +1248,7 @@ export const PromptInputSubmit = ({
   onStop,
   onClick,
   children,
+  "aria-label": ariaLabel,
   ...props
 }: PromptInputSubmitProps) => {
   const isGenerating = status === "submitted" || status === "streaming"
@@ -1272,7 +1277,9 @@ export const PromptInputSubmit = ({
 
   return (
     <InputGroupButton
-      aria-label={isGenerating ? "Stop" : "Submit"}
+      aria-label={
+        ariaLabel ?? (children ? undefined : isGenerating ? "Stop" : "Submit")
+      }
       className={cn(className)}
       onClick={handleClick}
       size={size}

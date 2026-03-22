@@ -1,8 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { memo, useMemo, useState } from "react"
 
-import { Badge } from "@/components/ui/badge"
 import {
   ChartContainer,
   ChartTooltip,
@@ -14,7 +13,7 @@ import {
   buildPortfolioWeightChartSummary,
   type PortfolioWeightBucket,
 } from "@/lib/portfolio/weight-chart"
-import { CircleAlert, LoaderCircle } from "lucide-react"
+import { CircleAlert } from "lucide-react"
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts"
 
 export type PortfolioWeightChartHolding = {
@@ -29,9 +28,6 @@ export type PortfolioWeightChartHolding = {
 type QuoteLikeStatus = "idle" | "loading" | "ready" | "error"
 
 type PortfolioWeightChartDatum = PortfolioWeightChartHolding & {
-  activeWeight: number | null
-  allWeight: number | null
-  convertedCostBasis: number | null
   convertedMarketValue: number | null
   costWeight: number
   displayWeight: number
@@ -57,12 +53,21 @@ const percentageFormatter = new Intl.NumberFormat("en-US", {
   style: "percent",
 })
 
+const currencyFormatters = new Map<string, Intl.NumberFormat>()
+
 function formatMoney(value: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    currency,
-    maximumFractionDigits: 2,
-    style: "currency",
-  }).format(value)
+  let formatter = currencyFormatters.get(currency)
+
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", {
+      currency,
+      maximumFractionDigits: 2,
+      style: "currency",
+    })
+    currencyFormatters.set(currency, formatter)
+  }
+
+  return formatter.format(value)
 }
 
 function formatPercent(value: number) {
@@ -71,23 +76,13 @@ function formatPercent(value: number) {
 
 function BucketLegend({ bucket }: { bucket: PortfolioWeightBucket }) {
   return (
-    <Badge className="gap-2" variant="outline">
+    <span className="inline-flex items-center gap-2 text-xs font-medium text-foreground/80">
       <span
         className="size-2 rounded-full"
-        style={{ backgroundColor: `var(--color-${bucket})` }}
+        style={{ backgroundColor: chartConfig[bucket].color }}
       />
       {bucket}
-    </Badge>
-  )
-}
-
-function SegmentLegend() {
-  return (
-    <div className="flex flex-wrap gap-2">
-      <Badge variant="outline">Faded section = cost basis</Badge>
-      <Badge variant="outline">Solid section = unrealized profit</Badge>
-      <Badge variant="outline">Red outline = underwater</Badge>
-    </div>
+    </span>
   )
 }
 
@@ -142,57 +137,44 @@ function PortfolioWeightTooltip({
   const datum = payload[0].payload
 
   return (
-    <div className="grid min-w-52 gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+    <div className="grid min-w-48 gap-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-xs shadow-lg">
       <div className="grid gap-0.5">
         <span className="font-medium text-foreground">{datum.label}</span>
         {datum.subtitle ? (
           <span className="text-muted-foreground">{datum.subtitle}</span>
         ) : null}
         <span className="text-muted-foreground">
-          {datum.isActive
-            ? `${datum.bucket} selected weight`
-            : `${datum.bucket} ghosted context`}
+          {datum.bucket} bucket{datum.isActive ? "" : " · context only"}
         </span>
       </div>
 
       <div className="grid gap-1">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-muted-foreground">Displayed weight</span>
-          <span className="font-mono tabular-nums">
+          <span className="text-muted-foreground">Weight</span>
+          <span className="tabular-nums">
             {formatPercent(datum.displayWeight)}
           </span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-muted-foreground">Local cost basis</span>
-          <span className="font-mono tabular-nums">
+          <span className="text-muted-foreground">Cost basis</span>
+          <span className="tabular-nums">
             {formatMoney(datum.costBasis, datum.bucket)}
           </span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-muted-foreground">Local market value</span>
-          <span className="font-mono tabular-nums">
+          <span className="text-muted-foreground">Market value</span>
+          <span className="tabular-nums">
             {formatMoney(datum.marketValue, datum.bucket)}
           </span>
         </div>
-        {datum.convertedCostBasis !== null ? (
+        {datum.convertedMarketValue !== null &&
+        isConvertedAcrossFx({
+          baseCurrency,
+          bucket: datum.bucket,
+        }) ? (
           <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Comparison cost basis</span>
-            <span className="font-mono tabular-nums">
-              {formatMoney(datum.convertedCostBasis, baseCurrency)}
-            </span>
-          </div>
-        ) : null}
-        {datum.convertedMarketValue !== null ? (
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">
-              {isConvertedAcrossFx({
-                baseCurrency,
-                bucket: datum.bucket,
-              })
-                ? `Converted market value (${baseCurrency})`
-                : `Comparison market value (${baseCurrency})`}
-            </span>
-            <span className="font-mono tabular-nums">
+            <span className="text-muted-foreground">Converted value</span>
+            <span className="tabular-nums">
               {formatMoney(datum.convertedMarketValue, baseCurrency)}
             </span>
           </div>
@@ -201,7 +183,7 @@ function PortfolioWeightTooltip({
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted-foreground">Unrealized P/L</span>
             <span
-              className="font-mono tabular-nums"
+              className="tabular-nums"
               style={{
                 color:
                   datum.unrealizedAmount >= 0
@@ -218,7 +200,7 @@ function PortfolioWeightTooltip({
   )
 }
 
-export function PortfolioWeightChart({
+export const PortfolioWeightChart = memo(function PortfolioWeightChart({
   fxIssue,
   fxSnapshot,
   fxStatus,
@@ -280,9 +262,6 @@ export function PortfolioWeightChart({
 
         return {
           ...holding,
-          activeWeight: bar.activeWeight,
-          allWeight: bar.allWeight,
-          convertedCostBasis: bar.convertedCostBasis,
           convertedMarketValue: bar.convertedMarketValue,
           costWeight: bar.costWeight,
           displayWeight: bar.displayWeight,
@@ -317,162 +296,150 @@ export function PortfolioWeightChart({
   }
 
   const chartHeight = Math.max(bars.length * 52, 260)
+  const shouldScrollChart = chartHeight > 560
   const showFxContext = availableBuckets.length > 1
 
   return (
-    <div className="rounded-xl border border-border/70 bg-background/70 p-4">
+    <div className="space-y-4 rounded-lg border border-border/60 bg-background/60 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-2">
-          <div>
-            <h4 className="text-sm font-medium">Combined weight chart</h4>
-            <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
-              Toggle buckets to recalculate active weights. Unselected buckets
-              stay ghosted for context.
-            </p>
-            <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
-              {showFxContext
-                ? `Weights use ${summary.baseCurrency} as the comparison currency when both buckets are selected.`
-                : `Weights stay inside the ${summary.baseCurrency} bucket.`}
-            </p>
-          </div>
-          {availableBuckets.length > 1 ? (
-            <ToggleGroup
-              onValueChange={(nextBuckets) => {
-                const nextSelection = nextBuckets as PortfolioWeightBucket[]
-
-                if (nextSelection.length > 0) {
-                  setSelectedBuckets(nextSelection)
-                }
-              }}
-              size="sm"
-              type="multiple"
-              value={effectiveSelectedBuckets}
-              variant="outline"
-            >
-              {availableBuckets.map((bucket) => (
-                <ToggleGroupItem key={bucket} value={bucket}>
-                  {bucket}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          ) : null}
+        <div className="space-y-1">
+          <h4 className="text-sm font-medium">Weight chart</h4>
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            Compare priced holdings by market value.
+            {showFxContext
+              ? ` Mixed selections normalize to ${summary.baseCurrency}.`
+              : ""}
+          </p>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {availableBuckets.map((bucket) => (
-            <BucketLegend bucket={bucket} key={bucket} />
-          ))}
-          <SegmentLegend />
-          {showFxContext ? (
-            <Badge variant="outline">
-              {fxStatus === "loading" ? (
-                <LoaderCircle className="size-3 animate-spin" />
-              ) : null}
-              Base {summary.baseCurrency}
-            </Badge>
-          ) : null}
-          {showFxContext && fxSnapshot ? (
-            <Badge variant="outline">
-              USD/TWD {fxSnapshot.rate.toFixed(4)}
-            </Badge>
-          ) : null}
-        </div>
+        {availableBuckets.length > 1 ? (
+          <ToggleGroup
+            className="border border-primary/15 bg-background/80 p-1"
+            onValueChange={(nextBuckets) => {
+              const nextSelection = nextBuckets as PortfolioWeightBucket[]
+
+              if (nextSelection.length > 0) {
+                setSelectedBuckets(nextSelection)
+              }
+            }}
+            size="sm"
+            type="multiple"
+            value={effectiveSelectedBuckets}
+            variant="outline"
+          >
+            {availableBuckets.map((bucket) => (
+              <ToggleGroupItem key={bucket} value={bucket}>
+                {bucket}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+        {availableBuckets.map((bucket) => (
+          <BucketLegend bucket={bucket} key={bucket} />
+        ))}
+        <span>Faded = cost basis</span>
+        <span>Solid = gain</span>
+        <span>Red edge = below cost</span>
+        {showFxContext && fxSnapshot ? (
+          <span>USD/TWD {fxSnapshot.rate.toFixed(4)}</span>
+        ) : null}
       </div>
 
       {showFxContext && fxIssue ? (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           <CircleAlert className="mt-0.5 size-4 shrink-0" />
           <p>{fxIssue}</p>
         </div>
       ) : null}
 
-      {showFxContext &&
-      fxStatus === "loading" &&
-      summary.needsFxRateForActive ? (
-        <p className="mt-4 text-xs text-muted-foreground">
-          Loading the USD/TWD previous close so mixed-bucket weights can be
-          normalized into {summary.baseCurrency}.
-        </p>
-      ) : null}
-
-      {showFxContext &&
-      fxStatus === "loading" &&
-      !summary.needsFxRateForActive ? (
-        <p className="mt-4 text-xs text-muted-foreground">
-          Loading the USD/TWD previous close so the unselected bucket can appear
-          as ghosted context.
+      {showFxContext && fxStatus === "loading" ? (
+        <p className="text-xs text-muted-foreground">
+          Loading the USD/TWD previous close
+          {summary.needsFxRateForActive
+            ? ` to normalize mixed-bucket weights into ${summary.baseCurrency}.`
+            : "."}
         </p>
       ) : null}
 
       {bars.length === 0 ? (
-        <div className="mt-4 flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-border/70 px-4 text-center text-sm text-muted-foreground">
-          Weight bars appear after the selected buckets have priced holdings
-          and, when needed, a USD/TWD FX snapshot.
+        <div className="flex min-h-[180px] items-center justify-center rounded-lg border border-dashed border-border/70 px-4 text-center text-sm text-muted-foreground">
+          Weight bars appear after the selected buckets have priced holdings.
         </div>
       ) : (
-        <ChartContainer
-          className="mt-4 aspect-auto min-h-[260px] w-full"
-          config={chartConfig}
-          style={{ height: `${chartHeight}px` }}
+        <div
+          className={
+            shouldScrollChart ? "max-h-[560px] overflow-y-auto pr-1" : undefined
+          }
         >
-          <BarChart
-            accessibilityLayer
-            data={bars}
-            layout="vertical"
-            margin={{ left: 0, right: 20, top: 8, bottom: 8 }}
+          <ChartContainer
+            className="aspect-auto min-h-[260px] w-full"
+            config={chartConfig}
+            style={{ height: `${chartHeight}px` }}
           >
-            <CartesianGrid horizontal={false} />
-            <YAxis
-              axisLine={false}
-              dataKey="label"
-              tickLine={false}
-              tickMargin={10}
-              type="category"
-              width={72}
-            />
-            <XAxis
-              axisLine={false}
-              domain={[0, 1]}
-              tickFormatter={(value) => formatPercent(Number(value))}
-              tickLine={false}
-              tickMargin={8}
-              type="number"
-            />
-            <ChartTooltip
-              content={
-                <PortfolioWeightTooltip baseCurrency={summary.baseCurrency} />
-              }
-              cursor={false}
-            />
-            <Bar dataKey="costWeight" radius={[8, 0, 0, 8]} stackId="value">
-              {bars.map((bar) => (
-                <Cell
-                  key={`${bar.key}-cost`}
-                  {...getBucketSegmentStyle({
-                    bucket: bar.bucket,
-                    isActive: bar.isActive,
-                    isUnderwater: bar.isUnderwater,
-                    segment: "cost",
-                  })}
-                />
-              ))}
-            </Bar>
-            <Bar dataKey="profitWeight" radius={[0, 8, 8, 0]} stackId="value">
-              {bars.map((bar) => (
-                <Cell
-                  key={`${bar.key}-profit`}
-                  {...getBucketSegmentStyle({
-                    bucket: bar.bucket,
-                    isActive: bar.isActive,
-                    isUnderwater: false,
-                    segment: "profit",
-                  })}
-                />
-              ))}
-            </Bar>
-          </BarChart>
-        </ChartContainer>
+            <BarChart
+              accessibilityLayer
+              data={bars}
+              layout="vertical"
+              margin={{ left: 0, right: 20, top: 8, bottom: 8 }}
+            >
+              <CartesianGrid horizontal={false} />
+              <YAxis
+                axisLine={false}
+                dataKey="label"
+                tickLine={false}
+                tickMargin={10}
+                type="category"
+                width={80}
+              />
+              <XAxis
+                axisLine={false}
+                domain={[0, 1]}
+                tickFormatter={(value) => formatPercent(Number(value))}
+                tickLine={false}
+                tickMargin={8}
+                type="number"
+              />
+              <ChartTooltip
+                content={
+                  <PortfolioWeightTooltip baseCurrency={summary.baseCurrency} />
+                }
+                cursor={false}
+              />
+              <Bar dataKey="costWeight" radius={[8, 0, 0, 8]} stackId="value">
+                {bars.map((bar) => (
+                  <Cell
+                    key={`${bar.key}-cost`}
+                    {...getBucketSegmentStyle({
+                      bucket: bar.bucket,
+                      isActive: bar.isActive,
+                      isUnderwater: bar.isUnderwater,
+                      segment: "cost",
+                    })}
+                  />
+                ))}
+              </Bar>
+              <Bar dataKey="profitWeight" radius={[0, 8, 8, 0]} stackId="value">
+                {bars.map((bar) => (
+                  <Cell
+                    key={`${bar.key}-profit`}
+                    {...getBucketSegmentStyle({
+                      bucket: bar.bucket,
+                      isActive: bar.isActive,
+                      isUnderwater: false,
+                      segment: "profit",
+                    })}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ChartContainer>
+        </div>
       )}
     </div>
   )
-}
+})
+
+PortfolioWeightChart.displayName = "PortfolioWeightChart"
