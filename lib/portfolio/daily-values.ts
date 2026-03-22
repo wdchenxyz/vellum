@@ -203,33 +203,15 @@ export function computeBenchmarkSeries(
 
   // Sort trades chronologically with stable tiebreaker.
   const sortedTrades = stableSortTrades(trades)
-
-  // Determine if trades happen before the first date with benchmark prices.
   const earliestTradeDate =
     sortedTrades.length > 0 ? sortedTrades[0].trade.date : null
-  const firstBenchDate = tradingDates.find(
-    (d) => getBenchmarkPriceTwd(d) !== null
-  )
 
   // Walk trades and accumulate benchmark units.
   let benchmarkUnits = 0
   let tradeIdx = 0
+  let addedCostPoint = false
 
   const series: DailyValuePoint[] = []
-
-  // Add synthetic cost-basis start point (same as portfolio) so all three
-  // lines begin at the same value on the trade date.
-  if (
-    earliestTradeDate !== null &&
-    firstBenchDate !== undefined &&
-    earliestTradeDate < firstBenchDate
-  ) {
-    const costTwd = computeTotalCostTwd(trades, fxRates, firstBenchDate)
-
-    if (costTwd > 0) {
-      series.push({ date: earliestTradeDate, value: Math.round(costTwd) })
-    }
-  }
 
   for (const date of tradingDates) {
     // Apply any trades on or before this date.
@@ -265,7 +247,25 @@ export function computeBenchmarkSeries(
     const priceTwd = getBenchmarkPriceTwd(date)
 
     if (priceTwd !== null) {
-      series.push({ date, value: Math.round(benchmarkUnits * priceTwd) })
+      const value = Math.round(benchmarkUnits * priceTwd)
+
+      // Insert synthetic cost-basis point before the first real value
+      // so the benchmark starts at the same value as the portfolio.
+      if (
+        !addedCostPoint &&
+        earliestTradeDate !== null &&
+        earliestTradeDate < date
+      ) {
+        const costTwd = computeTotalCostTwd(trades, fxRates, date)
+
+        if (costTwd > 0) {
+          series.push({ date: earliestTradeDate, value: Math.round(costTwd) })
+        }
+
+        addedCostPoint = true
+      }
+
+      series.push({ date, value })
     }
   }
 
@@ -325,18 +325,8 @@ export function computeDailyValues(
   }
 
   const series: DailyValuePoint[] = []
-
-  // If trades happen before the first market date, add a synthetic cost-basis
-  // data point so the portfolio starts at the same value as the benchmarks.
-  if (startDate < dates[0]) {
-    const totalCostTwd = computeTotalCostTwd(trades, fxRates, dates[0])
-
-    if (totalCostTwd > 0) {
-      series.push({ date: startDate, value: Math.round(totalCostTwd) })
-    }
-  }
-
   let currentPositions = new Map<string, PositionEntry>()
+  let addedCostPoint = false
 
   for (const date of dates) {
     // Apply any trades on or before this date that haven't been applied yet.
@@ -383,6 +373,21 @@ export function computeDailyValues(
     }
 
     if (hasAnyPrice) {
+      // Insert a synthetic cost-basis point just before the first real
+      // market-value point so the chart starts at the deployed capital.
+      if (!addedCostPoint && startDate <= date) {
+        const totalCostTwd = computeTotalCostTwd(trades, fxRates, date)
+
+        if (
+          totalCostTwd > 0 &&
+          Math.round(totalCostTwd) !== Math.round(totalTwd)
+        ) {
+          series.push({ date: startDate, value: Math.round(totalCostTwd) })
+        }
+
+        addedCostPoint = true
+      }
+
       series.push({ date, value: Math.round(totalTwd) })
     }
   }
