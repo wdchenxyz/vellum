@@ -1,6 +1,6 @@
 import "server-only"
 
-import type { SupportedMarket } from "@/lib/portfolio/schema"
+import type { BenchmarkPrices, SupportedMarket } from "@/lib/portfolio/schema"
 import {
   type DailyPriceSeries,
   getCachedFxHistory,
@@ -17,6 +17,21 @@ import {
 import { z } from "zod"
 
 const FINMIND_DATA_URL = "https://api.finmindtrade.com/api/v4/data"
+
+const BENCHMARK_CACHE_KEYS: Record<keyof BenchmarkPrices, string> = {
+  spx: "BENCH:SPY",
+  twii: "BENCH:0050",
+}
+
+type BenchmarkDef = {
+  market: "US" | "TW"
+  symbol: string
+}
+
+const BENCHMARK_DEFS: Record<keyof BenchmarkPrices, BenchmarkDef> = {
+  spx: { market: "US", symbol: "SPY" },
+  twii: { market: "TW", symbol: "0050" },
+}
 
 export type HistoryTarget = {
   key: string
@@ -217,4 +232,51 @@ export async function fetchFxHistory(
   await setCachedFxHistory(merged)
 
   return merged
+}
+
+export async function fetchBenchmarkHistory(
+  startDate: string,
+  fetcher: typeof fetch = fetch
+): Promise<BenchmarkPrices> {
+  const results = await Promise.all(
+    (Object.keys(BENCHMARK_DEFS) as Array<keyof BenchmarkPrices>).map(
+      async (key) => {
+        const cacheKey = BENCHMARK_CACHE_KEYS[key]
+        const def = BENCHMARK_DEFS[key]
+        const cached = await getCachedTickerHistory(cacheKey)
+
+        if (cached?.fresh) {
+          return { key, prices: cached.prices }
+        }
+
+        try {
+          const fetchStart = cached
+            ? getIncrementalStartDate(cached.prices, startDate)
+            : startDate
+
+          const newPrices =
+            def.market === "TW"
+              ? await fetchFinMindDailyPrices(def.symbol, fetchStart, fetcher)
+              : await fetchTwelveDataTimeSeries(def.symbol, fetchStart, fetcher)
+
+          const merged = cached ? { ...cached.prices, ...newPrices } : newPrices
+
+          await setCachedTickerHistory(cacheKey, merged)
+
+          return { key, prices: merged }
+        } catch {
+          // Return stale data if available, otherwise empty.
+          return { key, prices: cached?.prices ?? {} }
+        }
+      }
+    )
+  )
+
+  const benchmarks: BenchmarkPrices = { spx: {}, twii: {} }
+
+  for (const result of results) {
+    benchmarks[result.key] = result.prices
+  }
+
+  return benchmarks
 }

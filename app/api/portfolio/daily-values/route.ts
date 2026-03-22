@@ -6,8 +6,13 @@ import {
   getQuoteLookupKey,
   inferSupportedMarket,
 } from "@/lib/portfolio/holdings"
+import type { BenchmarkPrices } from "@/lib/portfolio/schema"
 import type { DailyPriceSeries } from "@/lib/quotes/history-cache"
-import { fetchFxHistory, fetchTickerHistory } from "@/lib/quotes/history"
+import {
+  fetchBenchmarkHistory,
+  fetchFxHistory,
+  fetchTickerHistory,
+} from "@/lib/quotes/history"
 import { readStoredTradeRows } from "@/lib/trades/storage"
 
 export const dynamic = "force-dynamic"
@@ -117,8 +122,17 @@ export async function GET() {
 
     const series = computeDailyValues(trades, priceSeries, fxRates)
 
+    // Fetch benchmark indices in parallel (best-effort).
+    let benchmarks: BenchmarkPrices = { spx: {}, twii: {} }
+
+    try {
+      benchmarks = await fetchBenchmarkHistory(startDate)
+    } catch {
+      // Non-critical — chart still works without benchmarks.
+    }
+
     return NextResponse.json(
-      { series, issues: fetchIssues },
+      { benchmarks, series, issues: fetchIssues },
       { headers: { "Cache-Control": "no-store" } }
     )
   } catch (error) {

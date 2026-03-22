@@ -9,15 +9,38 @@ import {
 } from "@/components/ui/chart"
 import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type { DailyValuePoint } from "@/lib/portfolio/schema"
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import type { BenchmarkPrices, DailyValuePoint } from "@/lib/portfolio/schema"
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  XAxis,
+  YAxis,
+} from "recharts"
+
+// -----------------------------------------------------------------------
+// Config
+// -----------------------------------------------------------------------
 
 const chartConfig = {
-  value: {
-    label: "Asset value",
+  portfolio: {
+    label: "Portfolio",
     color: "var(--chart-1)",
   },
+  spx: {
+    label: "S&P 500",
+    color: "var(--chart-4)",
+  },
+  twii: {
+    label: "TAIEX",
+    color: "var(--chart-5)",
+  },
 } satisfies ChartConfig
+
+// -----------------------------------------------------------------------
+// Formatters
+// -----------------------------------------------------------------------
 
 const twdFormatter = new Intl.NumberFormat("en-US", {
   currency: "TWD",
@@ -33,6 +56,11 @@ const fullDateFormatter = new Intl.DateTimeFormat("en-US", {
 
 function formatTwd(value: number) {
   return twdFormatter.format(value)
+}
+
+function formatPercent(value: number) {
+  const sign = value >= 0 ? "+" : ""
+  return `${sign}${value.toFixed(2)}%`
 }
 
 function formatTickDate(dateString: string) {
@@ -99,15 +127,118 @@ function filterSeries(
 }
 
 // -----------------------------------------------------------------------
+// Benchmark projection into TWD space
+// -----------------------------------------------------------------------
+
+/**
+ * Each point has:
+ * - portfolio: real TWD value
+ * - spx / twii: projected TWD value (starting from the same point as
+ *   the portfolio, then moving proportionally to the index)
+ * - spxPct / twiiPct: raw % change from start (for tooltip)
+ */
+type ChartPoint = {
+  date: string
+  portfolio: number
+  spx: number | null
+  spxPct: number | null
+  twii: number | null
+  twiiPct: number | null
+}
+
+function getLastKnownValue(
+  prices: Record<string, number>,
+  date: string
+): number | null {
+  if (date in prices) {
+    return prices[date]
+  }
+
+  let best: string | null = null
+
+  for (const d of Object.keys(prices)) {
+    if (d <= date && (best === null || d > best)) {
+      best = d
+    }
+  }
+
+  return best ? prices[best] : null
+}
+
+function buildChartData(
+  filtered: DailyValuePoint[],
+  benchmarks: BenchmarkPrices
+): ChartPoint[] {
+  if (filtered.length === 0) {
+    return []
+  }
+
+  const basePortfolio = filtered[0].value
+  const baseDate = filtered[0].date
+  const baseSpx = getLastKnownValue(benchmarks.spx, baseDate)
+  const baseTwii = getLastKnownValue(benchmarks.twii, baseDate)
+
+  return filtered.map((point) => {
+    const spxVal = getLastKnownValue(benchmarks.spx, point.date)
+    const twiiVal = getLastKnownValue(benchmarks.twii, point.date)
+
+    const spxPct =
+      baseSpx !== null && baseSpx > 0 && spxVal !== null
+        ? ((spxVal - baseSpx) / baseSpx) * 100
+        : null
+    const twiiPct =
+      baseTwii !== null && baseTwii > 0 && twiiVal !== null
+        ? ((twiiVal - baseTwii) / baseTwii) * 100
+        : null
+
+    return {
+      date: point.date,
+      portfolio: point.value,
+      spx: spxPct !== null ? basePortfolio * (1 + spxPct / 100) : null,
+      spxPct,
+      twii: twiiPct !== null ? basePortfolio * (1 + twiiPct / 100) : null,
+      twiiPct,
+    }
+  })
+}
+
+// -----------------------------------------------------------------------
 // Components
 // -----------------------------------------------------------------------
 
-function AssetValueTooltip({
+function getChangeColor(value: number) {
+  return value >= 0 ? "var(--color-chart-3)" : "var(--color-destructive)"
+}
+
+function TooltipRow({
+  color,
+  label,
+  value,
+}: {
+  color: string
+  label: string
+  value: string
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-1.5">
+        <span
+          className="size-2 rounded-full"
+          style={{ backgroundColor: color }}
+        />
+        <span className="text-muted-foreground">{label}</span>
+      </div>
+      <span className="tabular-nums">{value}</span>
+    </div>
+  )
+}
+
+function ChartPointTooltip({
   active,
   payload,
 }: {
   active?: boolean
-  payload?: Array<{ payload: DailyValuePoint }>
+  payload?: Array<{ payload: ChartPoint }>
 }) {
   if (!active || !payload?.length) {
     return null
@@ -116,24 +247,46 @@ function AssetValueTooltip({
   const point = payload[0].payload
 
   return (
-    <div className="grid gap-1 rounded-lg border border-border/70 bg-background px-3 py-2 text-xs shadow-lg">
+    <div className="grid min-w-44 gap-1.5 rounded-lg border border-border/70 bg-background px-3 py-2 text-xs shadow-lg">
       <span className="font-medium text-foreground">
         {formatFullDate(point.date)}
       </span>
-      <span className="text-foreground tabular-nums">
-        {formatTwd(point.value)}
-      </span>
+      <TooltipRow
+        color="var(--color-portfolio)"
+        label="Portfolio"
+        value={formatTwd(point.portfolio)}
+      />
+      {point.spxPct !== null ? (
+        <TooltipRow
+          color="var(--color-spx)"
+          label="S&P 500"
+          value={formatPercent(point.spxPct)}
+        />
+      ) : null}
+      {point.twiiPct !== null ? (
+        <TooltipRow
+          color="var(--color-twii)"
+          label="TAIEX"
+          value={formatPercent(point.twiiPct)}
+        />
+      ) : null}
     </div>
   )
 }
 
+// -----------------------------------------------------------------------
+// Main chart
+// -----------------------------------------------------------------------
+
 type AssetValueChartProps = {
+  benchmarks: BenchmarkPrices
   error: string | null
   series: DailyValuePoint[]
   status: "idle" | "loading" | "ready" | "error"
 }
 
 export const AssetValueChart = memo(function AssetValueChart({
+  benchmarks,
   error,
   series,
   status,
@@ -145,10 +298,19 @@ export const AssetValueChart = memo(function AssetValueChart({
     [series, range]
   )
 
-  const tickInterval = useMemo(
-    () => Math.max(Math.floor(filteredSeries.length / 7) - 1, 0),
-    [filteredSeries.length]
+  const chartData = useMemo(
+    () => buildChartData(filteredSeries, benchmarks),
+    [filteredSeries, benchmarks]
   )
+
+  const tickInterval = useMemo(
+    () => Math.max(Math.floor(chartData.length / 7) - 1, 0),
+    [chartData.length]
+  )
+
+  const hasBenchmarks =
+    Object.keys(benchmarks.spx).length > 0 ||
+    Object.keys(benchmarks.twii).length > 0
 
   const change = useMemo(() => {
     if (filteredSeries.length < 2) {
@@ -176,12 +338,7 @@ export const AssetValueChart = memo(function AssetValueChart({
             <div className="flex items-center gap-2">
               <span
                 className="text-sm font-medium tabular-nums"
-                style={{
-                  color:
-                    change.amount >= 0
-                      ? "var(--color-chart-3)"
-                      : "var(--color-destructive)",
-                }}
+                style={{ color: getChangeColor(change.amount) }}
               >
                 {change.amount >= 0 ? "+" : ""}
                 {formatTwd(change.amount)}
@@ -189,15 +346,9 @@ export const AssetValueChart = memo(function AssetValueChart({
               {change.ratio !== null ? (
                 <span
                   className="text-xs tabular-nums"
-                  style={{
-                    color:
-                      change.amount >= 0
-                        ? "var(--color-chart-3)"
-                        : "var(--color-destructive)",
-                  }}
+                  style={{ color: getChangeColor(change.amount) }}
                 >
-                  ({change.amount >= 0 ? "+" : ""}
-                  {(change.ratio * 100).toFixed(2)}%)
+                  ({formatPercent(change.ratio * 100)})
                 </span>
               ) : null}
             </div>
@@ -254,60 +405,117 @@ export const AssetValueChart = memo(function AssetValueChart({
         <p className="text-xs text-muted-foreground/80">{error}</p>
       ) : null}
 
-      {status === "ready" && filteredSeries.length > 0 ? (
-        <ChartContainer
-          className="aspect-auto h-[240px] w-full"
-          config={chartConfig}
-        >
-          <AreaChart
-            accessibilityLayer
-            data={filteredSeries}
-            margin={{ left: 0, right: 12, top: 8, bottom: 0 }}
+      {status === "ready" && chartData.length > 0 ? (
+        <>
+          {hasBenchmarks ? (
+            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className="size-2 rounded-full"
+                  style={{ backgroundColor: chartConfig.portfolio.color }}
+                />
+                Portfolio
+              </span>
+              {Object.keys(benchmarks.spx).length > 0 ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="size-2 rounded-full"
+                    style={{ backgroundColor: chartConfig.spx.color }}
+                  />
+                  S&P 500
+                </span>
+              ) : null}
+              {Object.keys(benchmarks.twii).length > 0 ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="size-2 rounded-full"
+                    style={{ backgroundColor: chartConfig.twii.color }}
+                  />
+                  TAIEX
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          <ChartContainer
+            className="aspect-auto h-[260px] w-full"
+            config={chartConfig}
           >
-            <defs>
-              <linearGradient id="assetFill" x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset="0%"
-                  stopColor="var(--color-value)"
-                  stopOpacity={0.2}
+            <ComposedChart
+              accessibilityLayer
+              data={chartData}
+              margin={{ left: 0, right: 12, top: 8, bottom: 0 }}
+            >
+              <defs>
+                <linearGradient id="portfolioFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="0%"
+                    stopColor="var(--color-portfolio)"
+                    stopOpacity={0.15}
+                  />
+                  <stop
+                    offset="95%"
+                    stopColor="var(--color-portfolio)"
+                    stopOpacity={0.02}
+                  />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                axisLine={false}
+                dataKey="date"
+                interval={tickInterval}
+                tickFormatter={formatTickDate}
+                tickLine={false}
+                tickMargin={8}
+              />
+              <YAxis
+                axisLine={false}
+                domain={["auto", "auto"]}
+                tickFormatter={(v) => formatTwd(Number(v))}
+                tickLine={false}
+                tickMargin={4}
+                width={90}
+              />
+              <ChartTooltip
+                content={<ChartPointTooltip />}
+                cursor={{
+                  stroke: "var(--color-border)",
+                  strokeDasharray: "4 4",
+                }}
+              />
+              <Area
+                dataKey="portfolio"
+                fill="url(#portfolioFill)"
+                stroke="var(--color-portfolio)"
+                strokeWidth={2}
+                type="monotone"
+              />
+              {Object.keys(benchmarks.spx).length > 0 ? (
+                <Line
+                  dataKey="spx"
+                  dot={false}
+                  stroke="var(--color-spx)"
+                  strokeDasharray="2 4"
+                  strokeLinecap="round"
+                  strokeWidth={2}
+                  type="monotone"
                 />
-                <stop
-                  offset="95%"
-                  stopColor="var(--color-value)"
-                  stopOpacity={0.02}
+              ) : null}
+              {Object.keys(benchmarks.twii).length > 0 ? (
+                <Line
+                  dataKey="twii"
+                  dot={false}
+                  stroke="var(--color-twii)"
+                  strokeDasharray="2 4"
+                  strokeLinecap="round"
+                  strokeWidth={2}
+                  type="monotone"
                 />
-              </linearGradient>
-            </defs>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              axisLine={false}
-              dataKey="date"
-              interval={tickInterval}
-              tickFormatter={formatTickDate}
-              tickLine={false}
-              tickMargin={8}
-            />
-            <YAxis
-              axisLine={false}
-              domain={["auto", "auto"]}
-              tickFormatter={(v) => formatTwd(Number(v))}
-              tickLine={false}
-              tickMargin={4}
-              width={90}
-            />
-            <ChartTooltip
-              content={<AssetValueTooltip />}
-              cursor={{ stroke: "var(--color-border)", strokeDasharray: "4 4" }}
-            />
-            <Area
-              dataKey="value"
-              fill="url(#assetFill)"
-              stroke="var(--color-value)"
-              strokeWidth={2}
-              type="monotone"
-            />
-          </AreaChart>
-        </ChartContainer>
+              ) : null}
+            </ComposedChart>
+          </ChartContainer>
+        </>
       ) : null}
 
       {status === "ready" &&
