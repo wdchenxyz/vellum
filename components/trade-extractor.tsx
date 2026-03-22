@@ -42,6 +42,7 @@ import {
   UPLOAD_ACCEPT,
 } from "@/lib/trades/constants"
 import {
+  deleteTradesResponseSchema,
   extractTradesResponseSchema,
   tradeRowsResponseSchema,
   type ExtractTradesResponse,
@@ -49,7 +50,7 @@ import {
 } from "@/lib/trades/schema"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ChevronDown, Paperclip, TriangleAlert } from "lucide-react"
-import { useEffect, useId, useMemo, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useState } from "react"
 
 function pluralize(value: number, singular: string, plural = `${singular}s`) {
   return value === 1 ? singular : plural
@@ -220,6 +221,7 @@ export function TradeExtractor() {
   >("idle")
   const [fxIssue, setFxIssue] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
+  const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
 
   const accountOptions = useMemo(
     () =>
@@ -423,6 +425,33 @@ export function TradeExtractor() {
     }
   }, [aggregatedPortfolio.holdings.length, missingQuoteTargets])
 
+  const handleDeleteTrade = useCallback(async (id: string) => {
+    setDeleteIssue(null)
+
+    const response = await fetch("/api/trades/rows", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: [id] }),
+    })
+
+    if (!response.ok) {
+      const message = await readErrorMessage(response)
+      setDeleteIssue(message)
+      throw new Error(message)
+    }
+
+    const payload = await response.json()
+    const parsed = deleteTradesResponseSchema.safeParse(payload)
+
+    if (!parsed.success) {
+      const message = "The server returned an unexpected response."
+      setDeleteIssue(message)
+      throw new Error(message)
+    }
+
+    setRows(parsed.data.rows)
+  }, [])
+
   async function handleSubmit(message: PromptInputMessage) {
     if (message.files.length === 0) {
       const issue = "Add at least one image or PDF before submitting."
@@ -608,7 +637,8 @@ export function TradeExtractor() {
 
       <TradesTable
         issues={successMessage ? issues : []}
-        restoreIssue={restoreIssue}
+        onDelete={handleDeleteTrade}
+        restoreIssue={deleteIssue ?? restoreIssue}
         rows={rows}
         successMessage={successMessage}
       />

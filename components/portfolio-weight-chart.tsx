@@ -28,6 +28,7 @@ export type PortfolioWeightChartHolding = {
 type QuoteLikeStatus = "idle" | "loading" | "ready" | "error"
 
 type PortfolioWeightChartDatum = PortfolioWeightChartHolding & {
+  convertedCostBasis: number | null
   convertedMarketValue: number | null
   costWeight: number
   displayWeight: number
@@ -90,16 +91,6 @@ function BucketLegend({ bucket }: { bucket: PortfolioWeightBucket }) {
   )
 }
 
-function isConvertedAcrossFx({
-  baseCurrency,
-  bucket,
-}: {
-  baseCurrency: PortfolioWeightBucket
-  bucket: PortfolioWeightBucket
-}) {
-  return baseCurrency !== bucket
-}
-
 function getBucketSegmentStyle({
   bucket,
   isActive,
@@ -125,14 +116,47 @@ function getBucketSegmentStyle({
   }
 }
 
+const twdIntegerFormatter = new Intl.NumberFormat("en-US", {
+  currency: "TWD",
+  maximumFractionDigits: 0,
+  style: "currency",
+})
+
+function formatTwdInteger(value: number) {
+  return twdIntegerFormatter.format(value)
+}
+
+function ConvertedTwd({
+  bucket,
+  usdTwdRate,
+  value,
+}: {
+  bucket: PortfolioWeightBucket
+  usdTwdRate: number | null
+  value: number
+}) {
+  if (bucket !== "USD" || usdTwdRate === null) {
+    return null
+  }
+
+  return (
+    <span className="text-muted-foreground">
+      {" "}
+      ({formatTwdInteger(value * usdTwdRate)})
+    </span>
+  )
+}
+
 function PortfolioWeightTooltip({
   active,
   baseCurrency,
   payload,
+  usdTwdRate,
 }: {
   active?: boolean
   baseCurrency: PortfolioWeightBucket
   payload?: Array<{ payload: PortfolioWeightChartDatum }>
+  usdTwdRate: number | null
 }) {
   if (!active || !payload?.length) {
     return null
@@ -163,26 +187,24 @@ function PortfolioWeightTooltip({
           <span className="text-muted-foreground">Cost basis</span>
           <span className="tabular-nums">
             {formatMoney(datum.costBasis, datum.bucket)}
+            <ConvertedTwd
+              bucket={datum.bucket}
+              usdTwdRate={usdTwdRate}
+              value={datum.costBasis}
+            />
           </span>
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className="text-muted-foreground">Market value</span>
           <span className="tabular-nums">
             {formatMoney(datum.marketValue, datum.bucket)}
+            <ConvertedTwd
+              bucket={datum.bucket}
+              usdTwdRate={usdTwdRate}
+              value={datum.marketValue}
+            />
           </span>
         </div>
-        {datum.convertedMarketValue !== null &&
-        isConvertedAcrossFx({
-          baseCurrency,
-          bucket: datum.bucket,
-        }) ? (
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Converted value</span>
-            <span className="tabular-nums">
-              {formatMoney(datum.convertedMarketValue, baseCurrency)}
-            </span>
-          </div>
-        ) : null}
         {datum.unrealizedAmount !== null ? (
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted-foreground">Unrealized P/L</span>
@@ -193,6 +215,11 @@ function PortfolioWeightTooltip({
               }}
             >
               {formatMoney(datum.unrealizedAmount, baseCurrency)}
+              <ConvertedTwd
+                bucket={datum.bucket}
+                usdTwdRate={usdTwdRate}
+                value={datum.unrealizedAmount}
+              />
             </span>
           </div>
         ) : null}
@@ -267,6 +294,7 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
 
         return {
           ...holding,
+          convertedCostBasis: bar.convertedCostBasis,
           convertedMarketValue: bar.convertedMarketValue,
           costWeight: bar.costWeight,
           displayWeight: bar.displayWeight,
@@ -382,7 +410,10 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
               />
               <ChartTooltip
                 content={
-                  <PortfolioWeightTooltip baseCurrency={summary.baseCurrency} />
+                  <PortfolioWeightTooltip
+                    baseCurrency={summary.baseCurrency}
+                    usdTwdRate={fxSnapshot?.rate ?? null}
+                  />
                 }
                 cursor={false}
               />

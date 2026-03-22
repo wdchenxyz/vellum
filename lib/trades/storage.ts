@@ -71,3 +71,24 @@ export async function appendStoredTradeRows(
     return nextRows
   })
 }
+
+export async function deleteStoredTradeRows(
+  ids: string[],
+  filePath = getTradeStoreFilePath()
+) {
+  if (ids.length === 0) {
+    return readStoredTradeRows(filePath)
+  }
+
+  return withWriteLock(async () => {
+    await ensureTradeStoreFile(filePath)
+
+    const existingRows = await readStoredTradeRows(filePath)
+    const idsToDelete = new Set(ids)
+    const nextRows = existingRows.filter((row) => !idsToDelete.has(row.id))
+
+    await writeFile(filePath, `${JSON.stringify(nextRows, null, 2)}\n`, "utf8")
+
+    return nextRows
+  })
+}

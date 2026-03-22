@@ -171,5 +171,15 @@ export type TradeFileInput = z.infer<typeof tradeFileSchema>
 export type ExtractTradesRequest = z.infer<typeof extractTradesRequestSchema>
 export type FileExtractionResult = z.infer<typeof fileExtractionResultSchema>
 export type TradeTableRow = z.infer<typeof tradeTableRowSchema>
+export const deleteTradesRequestSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1),
+})
+
+export const deleteTradesResponseSchema = z.object({
+  rows: z.array(tradeTableRowSchema),
+})
+
+export type DeleteTradesRequest = z.infer<typeof deleteTradesRequestSchema>
+export type DeleteTradesResponse = z.infer<typeof deleteTradesResponseSchema>
 export type ExtractTradesResponse = z.infer<typeof extractTradesResponseSchema>
 export type TradeRowsResponse = z.infer<typeof tradeRowsResponseSchema>
