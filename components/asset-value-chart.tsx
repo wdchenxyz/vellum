@@ -264,6 +264,7 @@ function ChartPointTooltip({
 
 type AssetValueChartProps = {
   benchmarks: BenchmarkSeries
+  costBasisTwd: number
   error: string | null
   series: DailyValuePoint[]
   status: "idle" | "loading" | "ready" | "error"
@@ -271,6 +272,7 @@ type AssetValueChartProps = {
 
 export const AssetValueChart = memo(function AssetValueChart({
   benchmarks,
+  costBasisTwd,
   error,
   series,
   status,
@@ -303,14 +305,20 @@ export const AssetValueChart = memo(function AssetValueChart({
   const hasBenchmarks = benchmarks.spx.length > 0 || benchmarks.twii.length > 0
 
   const change = useMemo(() => {
-    if (filteredSeries.length < 2) {
+    if (filteredSeries.length < 1) {
       return null
     }
 
-    const first = filteredSeries[0].value
     const last = filteredSeries[filteredSeries.length - 1].value
-    const amount = last - first
-    const ratio = first > 0 ? amount / first : null
+
+    // For "All" view, use cost basis (matches the total asset card).
+    // For other views, use the first visible data point.
+    const base =
+      range === "all" && costBasisTwd > 0
+        ? costBasisTwd
+        : filteredSeries[0].value
+    const amount = last - base
+    const ratio = base > 0 ? amount / base : null
 
     return { amount, ratio }
   }, [filteredSeries])

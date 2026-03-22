@@ -227,6 +227,7 @@ export function TradeExtractor() {
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
   const [dailySeries, setDailySeries] = useState<DailyValuePoint[]>([])
+  const [dailyCostBasis, setDailyCostBasis] = useState(0)
   const [dailyBenchmarks, setDailyBenchmarks] = useState<BenchmarkSeries>({
     spx: [],
     twii: [],
@@ -475,6 +476,7 @@ export function TradeExtractor() {
         }
 
         setDailySeries(parsed.data.series)
+        setDailyCostBasis(parsed.data.costBasisTwd)
         setDailyBenchmarks(parsed.data.benchmarks)
         setDailyIssue(
           parsed.data.issues.length > 0
@@ -608,6 +610,7 @@ export function TradeExtractor() {
       {rows.length > 0 ? (
         <AssetValueChart
           benchmarks={dailyBenchmarks}
+          costBasisTwd={dailyCostBasis}
           error={dailyIssue}
           series={dailySeries}
           status={dailyStatus}

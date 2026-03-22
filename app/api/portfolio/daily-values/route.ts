@@ -152,8 +152,25 @@ export async function GET() {
       // Non-critical — chart still works without benchmarks.
     }
 
+    // Compute cost basis in TWD using the same method as the summary card:
+    // aggregateHoldings cost * latest FX rate.
+    const fxDates = Object.keys(fxRates).sort()
+    const latestFxRate =
+      fxDates.length > 0 ? fxRates[fxDates[fxDates.length - 1]] : 0
+    let costBasisTwd = 0
+
+    for (const holding of holdings) {
+      const rate = holding.currency === "USD" ? latestFxRate : 1
+      costBasisTwd += holding.totalCostOpen * rate
+    }
+
     return NextResponse.json(
-      { benchmarks, series, issues: fetchIssues },
+      {
+        benchmarks,
+        costBasisTwd: Math.round(costBasisTwd),
+        series,
+        issues: fetchIssues,
+      },
       { headers: { "Cache-Control": "no-store" } }
     )
   } catch (error) {
