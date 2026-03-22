@@ -133,6 +133,7 @@ function filterByRange<T extends { date: string }>(
 type ChartPoint = {
   date: string
   portfolio: number
+  portfolioPct: number | null
   spx: number | null
   spxPct: number | null
   twii: number | null
@@ -150,6 +151,7 @@ function buildChartData(
   const spxByDate = new Map(benchmarks.spx.map((p) => [p.date, p.value]))
   const twiiByDate = new Map(benchmarks.twii.map((p) => [p.date, p.value]))
 
+  const firstPortfolio = portfolio.length > 0 ? portfolio[0].value : null
   const firstSpx = benchmarks.spx.length > 0 ? benchmarks.spx[0].value : null
   const firstTwii = benchmarks.twii.length > 0 ? benchmarks.twii[0].value : null
 
@@ -160,6 +162,8 @@ function buildChartData(
     return {
       date: point.date,
       portfolio: point.value,
+      portfolioPct:
+        firstPortfolio !== null ? pctChange(point.value, firstPortfolio) : null,
       spx,
       spxPct:
         spx !== null && firstSpx !== null ? pctChange(spx, firstSpx) : null,
@@ -222,7 +226,11 @@ function ChartPointTooltip({
       <TooltipRow
         color="var(--color-portfolio)"
         label="Portfolio"
-        value={formatTwd(point.portfolio)}
+        value={
+          point.portfolioPct !== null
+            ? `${formatTwd(point.portfolio)} (${formatPercent(point.portfolioPct)})`
+            : formatTwd(point.portfolio)
+        }
       />
       {point.spx !== null ? (
         <TooltipRow
