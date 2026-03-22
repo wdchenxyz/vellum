@@ -134,23 +134,40 @@ type ChartPoint = {
   date: string
   portfolio: number
   spx: number | null
+  spxPct: number | null
   twii: number | null
+  twiiPct: number | null
+}
+
+function pctChange(current: number, base: number): number | null {
+  return base > 0 ? ((current - base) / base) * 100 : null
 }
 
 function buildChartData(
   portfolio: DailyValuePoint[],
   benchmarks: BenchmarkSeries
 ): ChartPoint[] {
-  // Index benchmark arrays by date for O(1) lookup.
   const spxByDate = new Map(benchmarks.spx.map((p) => [p.date, p.value]))
   const twiiByDate = new Map(benchmarks.twii.map((p) => [p.date, p.value]))
 
-  return portfolio.map((point) => ({
-    date: point.date,
-    portfolio: point.value,
-    spx: spxByDate.get(point.date) ?? null,
-    twii: twiiByDate.get(point.date) ?? null,
-  }))
+  const firstSpx = benchmarks.spx.length > 0 ? benchmarks.spx[0].value : null
+  const firstTwii = benchmarks.twii.length > 0 ? benchmarks.twii[0].value : null
+
+  return portfolio.map((point) => {
+    const spx = spxByDate.get(point.date) ?? null
+    const twii = twiiByDate.get(point.date) ?? null
+
+    return {
+      date: point.date,
+      portfolio: point.value,
+      spx,
+      spxPct:
+        spx !== null && firstSpx !== null ? pctChange(spx, firstSpx) : null,
+      twii,
+      twiiPct:
+        twii !== null && firstTwii !== null ? pctChange(twii, firstTwii) : null,
+    }
+  })
 }
 
 // -----------------------------------------------------------------------
@@ -211,14 +228,22 @@ function ChartPointTooltip({
         <TooltipRow
           color="var(--color-spx)"
           label="S&P 500"
-          value={formatTwd(point.spx)}
+          value={
+            point.spxPct !== null
+              ? `${formatTwd(point.spx)} (${formatPercent(point.spxPct)})`
+              : formatTwd(point.spx)
+          }
         />
       ) : null}
       {point.twii !== null ? (
         <TooltipRow
           color="var(--color-twii)"
           label="TAIEX"
-          value={formatTwd(point.twii)}
+          value={
+            point.twiiPct !== null
+              ? `${formatTwd(point.twii)} (${formatPercent(point.twiiPct)})`
+              : formatTwd(point.twii)
+          }
         />
       ) : null}
     </div>
