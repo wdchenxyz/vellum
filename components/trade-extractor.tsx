@@ -138,16 +138,13 @@ function OptionalNote() {
   const textareaId = useId()
 
   return (
-    <details className="group border-t border-border/70 bg-secondary/15 px-4 py-3">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-secondary-foreground">
-        <span>
-          Add context note{" "}
-          <span className="font-normal text-muted-foreground">Optional</span>
-        </span>
-        <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+    <details className="group px-4 pb-2">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+        <ChevronDown className="size-3 transition-transform group-open:rotate-180" />
+        Add context note
       </summary>
       <PromptInputTextarea
-        className="mt-3 min-h-20"
+        className="mt-1 min-h-16 text-sm"
         id={textareaId}
         placeholder="Example: ignore account summary totals and extract only filled trades."
       />
@@ -690,9 +687,9 @@ export function TradeExtractor() {
           <PromptInputBody>
             <OptionalNote />
           </PromptInputBody>
-          <PromptInputFooter className="border-t border-border/70 bg-secondary/15 px-4 py-3">
+          <PromptInputFooter className="border-t px-4 py-3">
             <PromptInputTools>
-              <span className="text-xs text-secondary-foreground/80">
+              <span className="text-xs text-muted-foreground">
                 {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
                 {MAX_BATCH_SIZE_LABEL} total
               </span>
