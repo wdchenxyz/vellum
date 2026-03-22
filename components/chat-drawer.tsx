@@ -21,9 +21,46 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useChat } from "@ai-sdk/react"
 import { Loader2, MessageCircle, X } from "lucide-react"
-import { useCallback, useRef, useState, type ReactNode } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 
 const SIDEBAR_WIDTH = "w-[480px]"
+
+const ChatDrawerContext = createContext<{
+  open: boolean
+  setOpen: (open: boolean) => void
+}>({ open: false, setOpen: () => {} })
+
+export function useChatDrawer() {
+  return useContext(ChatDrawerContext)
+}
+
+export function ChatTrigger() {
+  const { open, setOpen } = useChatDrawer()
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className={cn(
+        "size-8",
+        open ? "text-foreground" : "text-muted-foreground"
+      )}
+      onClick={() => setOpen(!open)}
+    >
+      <MessageCircle className="size-4" />
+      <span className="sr-only">
+        {open ? "Close chat" : "Chat with your portfolio"}
+      </span>
+    </Button>
+  )
+}
 
 function ToolCallIndicator({ toolName }: { toolName: string }) {
   const labels: Record<string, string> = {
@@ -167,22 +204,11 @@ export function ChatLayout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="flex h-svh overflow-hidden">
-      <div className="flex-1 overflow-y-auto">{children}</div>
-
-      {open && <ChatPanel onClose={() => setOpen(false)} />}
-
-      {!open && (
-        <Button
-          variant="outline"
-          size="icon"
-          className="fixed right-6 bottom-6 z-40 size-12 rounded-full shadow-lg"
-          onClick={() => setOpen(true)}
-        >
-          <MessageCircle className="size-5" />
-          <span className="sr-only">Chat with your portfolio</span>
-        </Button>
-      )}
-    </div>
+    <ChatDrawerContext.Provider value={{ open, setOpen }}>
+      <div className="flex h-svh overflow-hidden">
+        <div className="flex-1 overflow-y-auto">{children}</div>
+        {open && <ChatPanel onClose={() => setOpen(false)} />}
+      </div>
+    </ChatDrawerContext.Provider>
   )
 }

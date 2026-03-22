@@ -1,4 +1,4 @@
-import { ChatLayout } from "@/components/chat-drawer"
+import { ChatLayout, ChatTrigger } from "@/components/chat-drawer"
 import { PaletteToggle } from "@/components/palette-toggle"
 import { TradeExtractor } from "@/components/trade-extractor"
 
@@ -11,7 +11,10 @@ export default function Page() {
             <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
               Vellum
             </h1>
-            <PaletteToggle />
+            <div className="flex items-center gap-0.5">
+              <ChatTrigger />
+              <PaletteToggle />
+            </div>
           </header>
 
           <TradeExtractor />
