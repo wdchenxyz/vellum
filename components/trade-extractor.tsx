@@ -47,6 +47,7 @@ import {
   type ExtractTradesResponse,
   type TradeTableRow,
 } from "@/lib/trades/schema"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ChevronDown, Paperclip, TriangleAlert } from "lucide-react"
 import { useEffect, useId, useMemo, useState } from "react"
 
@@ -218,6 +219,19 @@ export function TradeExtractor() {
     "idle" | "loading" | "ready" | "error"
   >("idle")
   const [fxIssue, setFxIssue] = useState<string | null>(null)
+  const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
+
+  const accountOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          rows
+            .map((row) => row.account)
+            .filter((account): account is string => account !== null)
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [rows]
+  )
 
   const aggregatedPortfolio = useMemo(() => aggregateHoldings(rows), [rows])
   const valuedPortfolio = useMemo(
@@ -429,6 +443,7 @@ export function TradeExtractor() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          account: selectedAccount,
           prompt: message.text,
           files: message.files,
         }),
@@ -496,6 +511,27 @@ export function TradeExtractor() {
             Add confirmations
           </h2>
         </div>
+
+        {accountOptions.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              Account
+            </span>
+            <ToggleGroup
+              onValueChange={(value) => setSelectedAccount(value || null)}
+              size="sm"
+              type="single"
+              value={selectedAccount ?? ""}
+              variant="outline"
+            >
+              {accountOptions.map((account) => (
+                <ToggleGroupItem key={account} value={account}>
+                  {account}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+        ) : null}
 
         {uploadIssue ? (
           <Alert
