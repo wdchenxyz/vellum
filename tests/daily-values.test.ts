@@ -33,7 +33,9 @@ describe("computeDailyValues", () => {
 
     const result = computeDailyValues(trades, prices, fxRates)
 
+    // Synthetic cost-basis point on trade date + market value on first trading date
     expect(result).toEqual([
+      { date: "2026-03-01", value: Math.round(1000 * 32) },
       { date: "2026-03-03", value: Math.round(10 * 105 * 32) },
     ])
   })
@@ -135,9 +137,10 @@ describe("computeDailyValues", () => {
 
     const result = computeDailyValues(trades, prices, fxRates)
 
-    // AAPL: 10 - 4 = 6 shares. MSFT: 5 shares.
-    // Value: (6 * 100 + 5 * 200) * 32
+    // Synthetic cost point for first trade (AAPL cost=1000 USD * FX 32)
+    // then market value on Mar 3: AAPL: 10 - 4 = 6, MSFT: 5
     expect(result).toEqual([
+      { date: "2026-03-01", value: Math.round(1000 * 32) },
       { date: "2026-03-03", value: Math.round((6 * 100 + 5 * 200) * 32) },
     ])
   })
@@ -157,8 +160,11 @@ describe("computeDailyValues", () => {
 
     const result = computeDailyValues(trades, prices, fxRates)
 
-    // TWD — no FX conversion
-    expect(result).toEqual([{ date: "2026-03-03", value: 100 * 80 }])
+    // Synthetic cost point (TWD — totalAmount directly) + market value
+    expect(result).toEqual([
+      { date: "2026-03-01", value: 1000 },
+      { date: "2026-03-03", value: 100 * 80 },
+    ])
   })
 
   it("same-day BUY then SELL uses insertion order", () => {

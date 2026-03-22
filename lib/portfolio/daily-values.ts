@@ -204,11 +204,29 @@ export function computeBenchmarkSeries(
   // Sort trades chronologically with stable tiebreaker.
   const sortedTrades = stableSortTrades(trades)
 
+  // Determine if trades happen before the first trading date.
+  const earliestTradeDate =
+    sortedTrades.length > 0 ? sortedTrades[0].trade.date : null
+
   // Walk trades and accumulate benchmark units.
   let benchmarkUnits = 0
   let tradeIdx = 0
 
   const series: DailyValuePoint[] = []
+
+  // Add synthetic cost-basis start point (same as portfolio) so all three
+  // lines begin at the same value.
+  if (
+    earliestTradeDate !== null &&
+    tradingDates.length > 0 &&
+    earliestTradeDate < tradingDates[0]
+  ) {
+    const costTwd = computeTotalCostTwd(trades, fxRates, tradingDates[0])
+
+    if (costTwd > 0) {
+      series.push({ date: earliestTradeDate, value: Math.round(costTwd) })
+    }
+  }
 
   for (const date of tradingDates) {
     // Apply any trades on or before this date.
@@ -252,6 +270,32 @@ export function computeBenchmarkSeries(
 }
 
 /**
+ * Compute the total cost basis in TWD from all trades.
+ * USD trades are converted using the FX rate on the given reference date.
+ */
+function computeTotalCostTwd(
+  trades: TradeTableRow[],
+  fxRates: DailyPriceSeries,
+  fxRefDate: string
+): number {
+  const rate = getLastKnownPrice(fxRates, fxRefDate) ?? 0
+  let total = 0
+
+  for (const trade of trades) {
+    const currency = trade.currency?.trim().toUpperCase() ?? null
+    const amount = trade.side === "BUY" ? trade.totalAmount : -trade.totalAmount
+
+    if (currency === "USD") {
+      total += amount * rate
+    } else {
+      total += amount
+    }
+  }
+
+  return Math.max(total, 0)
+}
+
+/**
  * Compute daily total portfolio value in TWD.
  *
  * - Walks every trading date from first trade to today.
@@ -278,6 +322,17 @@ export function computeDailyValues(
   }
 
   const series: DailyValuePoint[] = []
+
+  // If trades happen before the first market date, add a synthetic cost-basis
+  // data point so the portfolio starts at the same value as the benchmarks.
+  if (startDate < dates[0]) {
+    const totalCostTwd = computeTotalCostTwd(trades, fxRates, dates[0])
+
+    if (totalCostTwd > 0) {
+      series.push({ date: startDate, value: Math.round(totalCostTwd) })
+    }
+  }
+
   let currentPositions = new Map<string, PositionEntry>()
 
   for (const date of dates) {
