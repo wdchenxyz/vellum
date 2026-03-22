@@ -19,6 +19,7 @@ import {
   PromptInputTools,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input"
+import { AssetValueChart } from "@/components/asset-value-chart"
 import { HoldingsTable } from "@/components/holdings-table"
 import { PortfolioSummaryCards } from "@/components/portfolio-summary-cards"
 import { TradesTable } from "@/components/trades-table"
@@ -27,6 +28,8 @@ import {
   applyPreviousCloseQuotes,
 } from "@/lib/portfolio/holdings"
 import {
+  dailyValuesResponseSchema,
+  type DailyValuePoint,
   fxRateResponseSchema,
   type FxRateSnapshot,
   previousCloseResponseSchema,
@@ -222,6 +225,11 @@ export function TradeExtractor() {
   const [fxIssue, setFxIssue] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
+  const [dailySeries, setDailySeries] = useState<DailyValuePoint[]>([])
+  const [dailyStatus, setDailyStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle")
+  const [dailyIssue, setDailyIssue] = useState<string | null>(null)
 
   const accountOptions = useMemo(
     () =>
@@ -425,6 +433,61 @@ export function TradeExtractor() {
     }
   }, [aggregatedPortfolio.holdings.length, missingQuoteTargets])
 
+  useEffect(() => {
+    if (rows.length === 0) {
+      setDailyStatus("idle")
+      setDailyIssue(null)
+      setDailySeries([])
+      return
+    }
+
+    let cancelled = false
+
+    async function loadDailyValues() {
+      setDailyStatus("loading")
+      setDailyIssue(null)
+
+      try {
+        const response = await fetch("/api/portfolio/daily-values", {
+          cache: "no-store",
+        })
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response))
+        }
+
+        const payload = await response.json()
+        const parsed = dailyValuesResponseSchema.safeParse(payload)
+
+        if (!parsed.success) {
+          throw new Error(
+            "The server returned an unexpected daily values response."
+          )
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        setDailySeries(parsed.data.series)
+        setDailyStatus("ready")
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setDailyStatus("error")
+        setDailyIssue(getErrorMessage(error))
+      }
+    }
+
+    void loadDailyValues()
+
+    return () => {
+      cancelled = true
+    }
+  }, [rows])
+
   const handleDeleteTrade = useCallback(async (id: string) => {
     setDeleteIssue(null)
 
@@ -528,6 +591,14 @@ export function TradeExtractor() {
         <PortfolioSummaryCards
           fxSnapshot={fxSnapshot}
           holdings={valuedPortfolio.holdings}
+        />
+      ) : null}
+
+      {rows.length > 0 ? (
+        <AssetValueChart
+          error={dailyIssue}
+          series={dailySeries}
+          status={dailyStatus}
         />
       ) : null}
 

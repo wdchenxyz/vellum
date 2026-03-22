@@ -44,5 +44,16 @@ export type PreviousCloseLookupTarget = z.infer<
 export type PreviousCloseRequest = z.infer<typeof previousCloseRequestSchema>
 export type PreviousCloseQuote = z.infer<typeof previousCloseQuoteSchema>
 export type PreviousCloseResponse = z.infer<typeof previousCloseResponseSchema>
+export const dailyValuePointSchema = z.object({
+  date: z.string().min(1),
+  value: z.number().finite(),
+})
+
+export const dailyValuesResponseSchema = z.object({
+  series: z.array(dailyValuePointSchema),
+})
+
+export type DailyValuePoint = z.infer<typeof dailyValuePointSchema>
+export type DailyValuesResponse = z.infer<typeof dailyValuesResponseSchema>
 export type FxRateSnapshot = z.infer<typeof fxRateSnapshotSchema>
 export type FxRateResponse = z.infer<typeof fxRateResponseSchema>
