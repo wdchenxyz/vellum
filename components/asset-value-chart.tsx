@@ -165,9 +165,28 @@ function getLastKnownValue(
   return best ? prices[best] : null
 }
 
+/**
+ * Convert a USD-denominated price to TWD using the daily FX rate.
+ * Returns null if either value is unavailable.
+ */
+function toTwd(
+  usdPrice: number | null,
+  fxRates: Record<string, number>,
+  date: string
+): number | null {
+  if (usdPrice === null) {
+    return null
+  }
+
+  const rate = getLastKnownValue(fxRates, date)
+
+  return rate !== null ? usdPrice * rate : null
+}
+
 function buildChartData(
   filtered: DailyValuePoint[],
-  benchmarks: BenchmarkPrices
+  benchmarks: BenchmarkPrices,
+  fxRates: Record<string, number>
 ): ChartPoint[] {
   if (filtered.length === 0) {
     return []
@@ -175,16 +194,27 @@ function buildChartData(
 
   const basePortfolio = filtered[0].value
   const baseDate = filtered[0].date
-  const baseSpx = getLastKnownValue(benchmarks.spx, baseDate)
+
+  // SPX is USD-denominated — convert to TWD for apples-to-apples comparison.
+  const baseSpxTwd = toTwd(
+    getLastKnownValue(benchmarks.spx, baseDate),
+    fxRates,
+    baseDate
+  )
+  // 0050 is already TWD-denominated.
   const baseTwii = getLastKnownValue(benchmarks.twii, baseDate)
 
   return filtered.map((point) => {
-    const spxVal = getLastKnownValue(benchmarks.spx, point.date)
+    const spxTwd = toTwd(
+      getLastKnownValue(benchmarks.spx, point.date),
+      fxRates,
+      point.date
+    )
     const twiiVal = getLastKnownValue(benchmarks.twii, point.date)
 
     const spxPct =
-      baseSpx !== null && baseSpx > 0 && spxVal !== null
-        ? ((spxVal - baseSpx) / baseSpx) * 100
+      baseSpxTwd !== null && baseSpxTwd > 0 && spxTwd !== null
+        ? ((spxTwd - baseSpxTwd) / baseSpxTwd) * 100
         : null
     const twiiPct =
       baseTwii !== null && baseTwii > 0 && twiiVal !== null
@@ -281,6 +311,7 @@ function ChartPointTooltip({
 type AssetValueChartProps = {
   benchmarks: BenchmarkPrices
   error: string | null
+  fxRates: Record<string, number>
   series: DailyValuePoint[]
   status: "idle" | "loading" | "ready" | "error"
 }
@@ -288,6 +319,7 @@ type AssetValueChartProps = {
 export const AssetValueChart = memo(function AssetValueChart({
   benchmarks,
   error,
+  fxRates,
   series,
   status,
 }: AssetValueChartProps) {
@@ -299,8 +331,8 @@ export const AssetValueChart = memo(function AssetValueChart({
   )
 
   const chartData = useMemo(
-    () => buildChartData(filteredSeries, benchmarks),
-    [filteredSeries, benchmarks]
+    () => buildChartData(filteredSeries, benchmarks, fxRates),
+    [filteredSeries, benchmarks, fxRates]
   )
 
   const tickInterval = useMemo(

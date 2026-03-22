@@ -132,7 +132,7 @@ export async function GET() {
     }
 
     return NextResponse.json(
-      { benchmarks, series, issues: fetchIssues },
+      { benchmarks, fxRates, series, issues: fetchIssues },
       { headers: { "Cache-Control": "no-store" } }
     )
   } catch (error) {

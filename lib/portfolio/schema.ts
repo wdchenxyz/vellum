@@ -56,6 +56,7 @@ export const benchmarkPricesSchema = z.object({
 
 export const dailyValuesResponseSchema = z.object({
   benchmarks: benchmarkPricesSchema.default({ spx: {}, twii: {} }),
+  fxRates: z.record(z.string(), z.number()).default({}),
   issues: z.array(z.string()).default([]),
   series: z.array(dailyValuePointSchema),
 })

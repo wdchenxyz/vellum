@@ -231,6 +231,7 @@ export function TradeExtractor() {
     spx: {},
     twii: {},
   })
+  const [dailyFxRates, setDailyFxRates] = useState<Record<string, number>>({})
   const [dailyStatus, setDailyStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle")
@@ -476,6 +477,7 @@ export function TradeExtractor() {
 
         setDailySeries(parsed.data.series)
         setDailyBenchmarks(parsed.data.benchmarks)
+        setDailyFxRates(parsed.data.fxRates)
         setDailyIssue(
           parsed.data.issues.length > 0
             ? `Missing history for: ${parsed.data.issues.join("; ")}`
@@ -609,6 +611,7 @@ export function TradeExtractor() {
         <AssetValueChart
           benchmarks={dailyBenchmarks}
           error={dailyIssue}
+          fxRates={dailyFxRates}
           series={dailySeries}
           status={dailyStatus}
         />
