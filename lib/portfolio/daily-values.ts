@@ -154,25 +154,28 @@ function getLastKnownPrice(
 /**
  * Compute a cash-flow-adjusted benchmark value series.
  *
- * For every trade the user makes, the benchmark receives the same TWD cash
- * flow but buys/sells benchmark units instead.  This way the only difference
- * between the portfolio line and the benchmark line is investment returns —
- * capital flows are identical.
+ * On the first chart date the benchmark is seeded with the portfolio's actual
+ * market value (so all three lines start at the same point).  For any trades
+ * that occur **after** the first date, the benchmark receives the same TWD
+ * cash flow but buys/sells benchmark units instead.
  *
+ * @param portfolioSeries The portfolio's daily value series (used to seed
+ *                        the benchmark on the first date).
  * @param isUsd true if the benchmark is USD-denominated (e.g. SPY).
- *              Its price is multiplied by the FX rate to get TWD.
- *              false for TWD-denominated benchmarks (e.g. 0050).
  */
 export function computeBenchmarkSeries(
   trades: TradeTableRow[],
   benchmarkPrices: DailyPriceSeries,
   fxRates: DailyPriceSeries,
-  tradingDates: string[],
+  portfolioSeries: DailyValuePoint[],
   isUsd: boolean
 ): DailyValuePoint[] {
-  if (trades.length === 0 || tradingDates.length === 0) {
+  if (portfolioSeries.length === 0) {
     return []
   }
+
+  const tradingDates = portfolioSeries.map((p) => p.date)
+  const firstDate = tradingDates[0]
 
   function getBenchmarkPriceTwd(date: string): number | null {
     const rawPrice = getLastKnownPrice(benchmarkPrices, date)
@@ -201,26 +204,33 @@ export function computeBenchmarkSeries(
     return trade.totalAmount
   }
 
-  // Sort trades chronologically with stable tiebreaker.
-  const sortedTrades = stableSortTrades(trades)
+  // Seed benchmark with the portfolio's market value on the first date.
+  const firstBenchPrice = getBenchmarkPriceTwd(firstDate)
 
-  // Walk trades and accumulate benchmark units.
-  let benchmarkUnits = 0
+  if (firstBenchPrice === null || firstBenchPrice <= 0) {
+    return []
+  }
+
+  let benchmarkUnits = portfolioSeries[0].value / firstBenchPrice
+
+  // Only process trades that happen AFTER the first chart date —
+  // trades on or before the first date are captured by the seed.
+  const futureTrades = stableSortTrades(trades).filter(
+    ({ trade }) => trade.date > firstDate
+  )
   let tradeIdx = 0
 
   const series: DailyValuePoint[] = []
 
   for (const date of tradingDates) {
-    // Apply any trades on or before this date.
-    while (tradeIdx < sortedTrades.length) {
-      const { trade } = sortedTrades[tradeIdx]
+    // Apply any trades on or before this date (only future trades).
+    while (tradeIdx < futureTrades.length) {
+      const { trade } = futureTrades[tradeIdx]
 
       if (trade.date > date) {
         break
       }
 
-      // Use the current trading date's price (not the literal trade date)
-      // because the trade date may fall on a weekend/holiday with no data.
       const benchPriceTwd = getBenchmarkPriceTwd(date)
 
       if (benchPriceTwd !== null && benchPriceTwd > 0) {

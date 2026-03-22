@@ -126,7 +126,6 @@ export async function GET() {
     const series = computeDailyValues(trades, priceSeries, fxRates)
 
     // Compute cash-flow-adjusted benchmark value series.
-    const tradingDates = series.map((point) => point.date)
     let benchmarks: BenchmarkSeries = { spx: [], twii: [] }
 
     try {
@@ -137,14 +136,14 @@ export async function GET() {
           trades,
           rawBenchmarks.spx,
           fxRates,
-          tradingDates,
+          series,
           true
         ),
         twii: computeBenchmarkSeries(
           trades,
           rawBenchmarks.twii,
           fxRates,
-          tradingDates,
+          series,
           false
         ),
       }
