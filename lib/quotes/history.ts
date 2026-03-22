@@ -136,6 +136,26 @@ async function resolveTwTicker(
   return ticker.trim().toUpperCase()
 }
 
+/**
+ * Given existing cached dates, return a fetch start date that only covers
+ * the gap. We overlap by 2 days to handle any corrections/adjustments.
+ */
+function getIncrementalStartDate(
+  existingPrices: DailyPriceSeries,
+  fallbackStartDate: string
+): string {
+  const dates = Object.keys(existingPrices).sort()
+
+  if (dates.length === 0) {
+    return fallbackStartDate
+  }
+
+  const latest = new Date(`${dates[dates.length - 1]}T00:00:00`)
+  latest.setDate(latest.getDate() - 2)
+
+  return latest.toISOString().slice(0, 10)
+}
+
 export async function fetchTickerHistory(
   target: HistoryTarget,
   startDate: string,
@@ -143,26 +163,33 @@ export async function fetchTickerHistory(
 ): Promise<DailyPriceSeries> {
   const cached = await getCachedTickerHistory(target.key)
 
-  if (cached) {
-    return cached
+  if (cached?.fresh) {
+    return cached.prices
   }
 
-  let prices: DailyPriceSeries
+  // Incremental: only fetch from the latest cached date onward.
+  const fetchStart = cached
+    ? getIncrementalStartDate(cached.prices, startDate)
+    : startDate
+
+  let newPrices: DailyPriceSeries
 
   if (target.market === "TW") {
     const stockId = await resolveTwTicker(target.ticker, fetcher)
-    prices = await fetchFinMindDailyPrices(stockId, startDate, fetcher)
+    newPrices = await fetchFinMindDailyPrices(stockId, fetchStart, fetcher)
   } else {
-    prices = await fetchTwelveDataTimeSeries(
+    newPrices = await fetchTwelveDataTimeSeries(
       target.ticker.trim().toUpperCase(),
-      startDate,
+      fetchStart,
       fetcher
     )
   }
 
-  await setCachedTickerHistory(target.key, prices)
+  const merged = cached ? { ...cached.prices, ...newPrices } : newPrices
 
-  return prices
+  await setCachedTickerHistory(target.key, merged)
+
+  return merged
 }
 
 export async function fetchFxHistory(
@@ -171,13 +198,23 @@ export async function fetchFxHistory(
 ): Promise<DailyPriceSeries> {
   const cached = await getCachedFxHistory()
 
-  if (cached) {
-    return cached
+  if (cached?.fresh) {
+    return cached.prices
   }
 
-  const rates = await fetchTwelveDataTimeSeries("USD/TWD", startDate, fetcher)
+  const fetchStart = cached
+    ? getIncrementalStartDate(cached.prices, startDate)
+    : startDate
 
-  await setCachedFxHistory(rates)
+  const newRates = await fetchTwelveDataTimeSeries(
+    "USD/TWD",
+    fetchStart,
+    fetcher
+  )
 
-  return rates
+  const merged = cached ? { ...cached.prices, ...newRates } : newRates
+
+  await setCachedFxHistory(merged)
+
+  return merged
 }

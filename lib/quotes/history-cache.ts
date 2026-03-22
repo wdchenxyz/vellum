@@ -102,18 +102,23 @@ function isFresh(cachedAt: string) {
   return Date.now() - cachedAtMs < HISTORY_CACHE_TTL_MS
 }
 
+export type PriceCacheResult = {
+  fresh: boolean
+  prices: DailyPriceSeries
+}
+
 export async function getCachedTickerHistory(
   key: string,
   { filePath }: { filePath?: string } = {}
-): Promise<DailyPriceSeries | null> {
+): Promise<PriceCacheResult | null> {
   const cache = await readHistoryCache(filePath)
   const entry = cache.tickers[key]
 
-  if (!entry || !isFresh(entry.cachedAt)) {
+  if (!entry) {
     return null
   }
 
-  return entry.prices
+  return { fresh: isFresh(entry.cachedAt), prices: entry.prices }
 }
 
 export async function setCachedTickerHistory(
@@ -134,14 +139,17 @@ export async function setCachedTickerHistory(
 
 export async function getCachedFxHistory({
   filePath,
-}: { filePath?: string } = {}): Promise<DailyPriceSeries | null> {
+}: { filePath?: string } = {}): Promise<PriceCacheResult | null> {
   const cache = await readHistoryCache(filePath)
 
-  if (!cache.fxRates || !isFresh(cache.fxRates.cachedAt)) {
+  if (!cache.fxRates) {
     return null
   }
 
-  return cache.fxRates.prices
+  return {
+    fresh: isFresh(cache.fxRates.cachedAt),
+    prices: cache.fxRates.prices,
+  }
 }
 
 export async function setCachedFxHistory(
