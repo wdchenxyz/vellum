@@ -20,6 +20,7 @@ import {
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input"
 import { HoldingsTable } from "@/components/holdings-table"
+import { PortfolioSummaryCards } from "@/components/portfolio-summary-cards"
 import { TradesTable } from "@/components/trades-table"
 import {
   aggregateHoldings,
@@ -247,10 +248,7 @@ export function TradeExtractor() {
   const hasUsdBucket = valuedPortfolio.groups.some((group) =>
     group.currencies.includes("USD")
   )
-  const hasTwdBucket = valuedPortfolio.groups.some((group) =>
-    group.currencies.includes("TWD")
-  )
-  const needsUsdTwdFxSnapshot = hasUsdBucket && hasTwdBucket
+  const needsUsdTwdFxSnapshot = hasUsdBucket
   const missingQuoteTargets = useMemo(
     () =>
       aggregatedPortfolio.holdings
@@ -503,6 +501,13 @@ export function TradeExtractor() {
 
   return (
     <div className="grid gap-8">
+      {rows.length > 0 ? (
+        <PortfolioSummaryCards
+          fxSnapshot={fxSnapshot}
+          holdings={valuedPortfolio.holdings}
+        />
+      ) : null}
+
       <section className="space-y-4">
         <div className="space-y-1">
           <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
@@ -578,13 +583,6 @@ export function TradeExtractor() {
         </PromptInput>
       </section>
 
-      <TradesTable
-        issues={successMessage ? issues : []}
-        restoreIssue={restoreIssue}
-        rows={rows}
-        successMessage={successMessage}
-      />
-
       {rows.length > 0 ? (
         <HoldingsTable
           fxIssue={fxIssue}
@@ -598,6 +596,13 @@ export function TradeExtractor() {
           summaries={valuedPortfolio.summaries}
         />
       ) : null}
+
+      <TradesTable
+        issues={successMessage ? issues : []}
+        restoreIssue={restoreIssue}
+        rows={rows}
+        successMessage={successMessage}
+      />
     </div>
   )
 }
