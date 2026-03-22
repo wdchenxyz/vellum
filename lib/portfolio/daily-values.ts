@@ -214,30 +214,30 @@ export function computeBenchmarkSeries(
   const series: DailyValuePoint[] = []
 
   for (const date of tradingDates) {
-    // Apply any trades on or before this date.
-    while (tradeIdx < sortedTrades.length) {
-      const { trade } = sortedTrades[tradeIdx]
+    // Apply any trades on or before this date — but only if the benchmark
+    // has a price on this date. Otherwise defer trades to the next date
+    // that has a price (so trades aren't silently dropped).
+    const benchPriceForTrades = getBenchmarkPriceTwd(date)
 
-      if (trade.date > date) {
-        break
-      }
+    if (benchPriceForTrades !== null && benchPriceForTrades > 0) {
+      while (tradeIdx < sortedTrades.length) {
+        const { trade } = sortedTrades[tradeIdx]
 
-      // Use the current trading date's price (not the literal trade date)
-      // because the trade date may fall on a weekend/holiday with no data.
-      const benchPriceTwd = getBenchmarkPriceTwd(date)
+        if (trade.date > date) {
+          break
+        }
 
-      if (benchPriceTwd !== null && benchPriceTwd > 0) {
         const cashTwd = getTradeCashFlowTwd(trade, date)
-        const unitsDelta = cashTwd / benchPriceTwd
+        const unitsDelta = cashTwd / benchPriceForTrades
 
         if (trade.side === "BUY") {
           benchmarkUnits += unitsDelta
         } else {
           benchmarkUnits = Math.max(benchmarkUnits - unitsDelta, 0)
         }
-      }
 
-      tradeIdx++
+        tradeIdx++
+      }
     }
 
     if (benchmarkUnits <= 0) {
