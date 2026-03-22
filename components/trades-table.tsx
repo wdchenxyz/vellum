@@ -53,6 +53,10 @@ function TradeSummaryCard({ row }: { row: TradeTableRow }) {
           <dd className="font-medium tabular-nums">{row.date}</dd>
         </div>
         <div>
+          <dt className="text-xs text-muted-foreground">Account</dt>
+          <dd className="truncate font-medium">{row.account ?? "-"}</dd>
+        </div>
+        <div>
           <dt className="text-xs text-muted-foreground">Currency</dt>
           <dd className="font-medium tabular-nums">{row.currency ?? "-"}</dd>
         </div>
@@ -65,8 +69,8 @@ function TradeSummaryCard({ row }: { row: TradeTableRow }) {
           <dd className="tabular-nums">{formatNumber(row.price)}</dd>
         </div>
         <div className="col-span-2">
-          <dt className="text-xs text-muted-foreground">Fee</dt>
-          <dd className="tabular-nums">{formatNumber(row.fee)}</dd>
+          <dt className="text-xs text-muted-foreground">Total</dt>
+          <dd className="tabular-nums">{formatNumber(row.totalAmount)}</dd>
         </div>
       </dl>
     </article>
@@ -149,16 +153,17 @@ export const TradesTable = memo(function TradesTable({
             </div>
 
             <div className="hidden md:block">
-              <Table className="min-w-[720px]">
+              <Table className="min-w-[840px]">
                 <TableHeader className="bg-secondary/30">
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Ticker</TableHead>
+                    <TableHead>Account</TableHead>
                     <TableHead>Side</TableHead>
                     <TableHead className="text-right">Quantity</TableHead>
                     <TableHead className="text-right">Price</TableHead>
                     <TableHead className="text-right">Currency</TableHead>
-                    <TableHead className="text-right">Fee</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -172,6 +177,13 @@ export const TradesTable = memo(function TradesTable({
                           <span className="font-medium">{row.ticker}</span>
                           <span className="truncate text-xs text-muted-foreground">
                             {row.sourceFile}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="min-w-28">
+                          <span className="text-sm text-foreground">
+                            {row.account ?? "-"}
                           </span>
                         </div>
                       </TableCell>
@@ -192,7 +204,7 @@ export const TradesTable = memo(function TradesTable({
                         {row.currency ?? "-"}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {formatNumber(row.fee)}
+                        {formatNumber(row.totalAmount)}
                       </TableCell>
                     </TableRow>
                   ))}

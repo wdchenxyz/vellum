@@ -1,13 +1,12 @@
 "use client"
 
-import { memo, useMemo, useState } from "react"
+import { memo, useMemo } from "react"
 
 import {
   ChartContainer,
   ChartTooltip,
   type ChartConfig,
 } from "@/components/ui/chart"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { FxRateSnapshot } from "@/lib/portfolio/schema"
 import {
   buildPortfolioWeightChartSummary,
@@ -18,6 +17,7 @@ import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts"
 
 export type PortfolioWeightChartHolding = {
   bucket: PortfolioWeightBucket
+  contextLabel: string | null
   costBasis: number
   key: string
   label: string
@@ -72,6 +72,10 @@ function formatMoney(value: number, currency: string) {
 
 function formatPercent(value: number) {
   return percentageFormatter.format(value)
+}
+
+function getProfitColor(value: number) {
+  return value >= 0 ? "var(--color-chart-3)" : "var(--color-destructive)"
 }
 
 function BucketLegend({ bucket }: { bucket: PortfolioWeightBucket }) {
@@ -144,7 +148,7 @@ function PortfolioWeightTooltip({
           <span className="text-muted-foreground">{datum.subtitle}</span>
         ) : null}
         <span className="text-muted-foreground">
-          {datum.bucket} bucket{datum.isActive ? "" : " · context only"}
+          {[datum.contextLabel, datum.bucket].filter(Boolean).join(" · ")}
         </span>
       </div>
 
@@ -185,13 +189,23 @@ function PortfolioWeightTooltip({
             <span
               className="tabular-nums"
               style={{
-                color:
-                  datum.unrealizedAmount >= 0
-                    ? "var(--color-foreground)"
-                    : "var(--color-destructive)",
+                color: getProfitColor(datum.unrealizedAmount),
               }}
             >
               {formatMoney(datum.unrealizedAmount, baseCurrency)}
+            </span>
+          </div>
+        ) : null}
+        {datum.costBasis > 0 && datum.unrealizedAmount !== null ? (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Unrealized P/L %</span>
+            <span
+              className="tabular-nums"
+              style={{
+                color: getProfitColor(datum.unrealizedAmount),
+              }}
+            >
+              {formatPercent(datum.unrealizedAmount / datum.costBasis)}
             </span>
           </div>
         ) : null}
@@ -201,11 +215,13 @@ function PortfolioWeightTooltip({
 }
 
 export const PortfolioWeightChart = memo(function PortfolioWeightChart({
+  description,
   fxIssue,
   fxSnapshot,
   fxStatus,
   holdings,
 }: {
+  description: string
   fxIssue: string | null
   fxSnapshot: FxRateSnapshot | null
   fxStatus: QuoteLikeStatus
@@ -218,21 +234,10 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
       ].sort() as Array<PortfolioWeightBucket>,
     [holdings]
   )
-  const [selectedBuckets, setSelectedBuckets] = useState<
-    PortfolioWeightBucket[]
-  >([])
-  const effectiveSelectedBuckets = useMemo(() => {
-    const nextBuckets = selectedBuckets.filter((bucket) =>
-      availableBuckets.includes(bucket)
-    )
-
-    return nextBuckets.length > 0 ? nextBuckets : availableBuckets
-  }, [availableBuckets, selectedBuckets])
-
   const summary = useMemo(
     () =>
       buildPortfolioWeightChartSummary({
-        activeBuckets: effectiveSelectedBuckets,
+        activeBuckets: availableBuckets,
         holdings: holdings.map((holding) => ({
           bucket: holding.bucket,
           costBasis: holding.costBasis,
@@ -241,7 +246,7 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
         })),
         usdTwdRate: fxSnapshot?.rate ?? null,
       }),
-    [effectiveSelectedBuckets, fxSnapshot?.rate, holdings]
+    [availableBuckets, fxSnapshot?.rate, holdings]
   )
 
   const bars = useMemo(() => {
@@ -275,10 +280,6 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
         (holding): holding is PortfolioWeightChartDatum => holding !== null
       )
       .sort((left, right) => {
-        if (left.isActive !== right.isActive) {
-          return left.isActive ? -1 : 1
-        }
-
         if (right.displayWeight !== left.displayWeight) {
           return right.displayWeight - left.displayWeight
         }
@@ -305,35 +306,12 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
         <div className="space-y-1">
           <h4 className="text-sm font-medium">Weight chart</h4>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Compare priced holdings by market value.
+            {description}
             {showFxContext
               ? ` Mixed selections normalize to ${summary.baseCurrency}.`
               : ""}
           </p>
         </div>
-
-        {availableBuckets.length > 1 ? (
-          <ToggleGroup
-            className="border border-primary/15 bg-background/80 p-1"
-            onValueChange={(nextBuckets) => {
-              const nextSelection = nextBuckets as PortfolioWeightBucket[]
-
-              if (nextSelection.length > 0) {
-                setSelectedBuckets(nextSelection)
-              }
-            }}
-            size="sm"
-            type="multiple"
-            value={effectiveSelectedBuckets}
-            variant="outline"
-          >
-            {availableBuckets.map((bucket) => (
-              <ToggleGroupItem key={bucket} value={bucket}>
-                {bucket}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
@@ -358,7 +336,7 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
       {showFxContext && fxStatus === "loading" ? (
         <p className="text-xs text-muted-foreground">
           Loading the USD/TWD previous close
-          {summary.needsFxRateForActive
+          {summary.needsFxRateForAll
             ? ` to normalize mixed-bucket weights into ${summary.baseCurrency}.`
             : "."}
         </p>
@@ -366,7 +344,7 @@ export const PortfolioWeightChart = memo(function PortfolioWeightChart({
 
       {bars.length === 0 ? (
         <div className="flex min-h-[180px] items-center justify-center rounded-lg border border-dashed border-border/70 px-4 text-center text-sm text-muted-foreground">
-          Weight bars appear after the selected buckets have priced holdings.
+          Weight bars appear after the selected view has priced holdings.
         </div>
       ) : (
         <div

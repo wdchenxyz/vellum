@@ -1,15 +1,18 @@
-import { memo } from "react"
+"use client"
+
+import { memo, useMemo, useState } from "react"
 
 import {
-  type PortfolioCurrencyGroup,
+  type PortfolioHoldingGroup,
   type PortfolioSummary,
 } from "@/lib/portfolio/holdings"
-import type { FxRateSnapshot } from "@/lib/portfolio/schema"
+import type { FxRateSnapshot, SupportedMarket } from "@/lib/portfolio/schema"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   PortfolioWeightChart,
   type PortfolioWeightChartHolding,
 } from "@/components/portfolio-weight-chart"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Table,
   TableBody,
@@ -46,6 +49,32 @@ function formatPercent(value: number | null) {
   return percentageFormatter.format(value)
 }
 
+function getProfitAmount(holding: PortfolioHolding) {
+  if (holding.marketValue === null) {
+    return null
+  }
+
+  return holding.marketValue - holding.totalCostOpen
+}
+
+function getProfitRatio(holding: PortfolioHolding) {
+  const profitAmount = getProfitAmount(holding)
+
+  if (profitAmount === null || holding.totalCostOpen <= 0) {
+    return null
+  }
+
+  return profitAmount / holding.totalCostOpen
+}
+
+function getProfitColor(value: number | null) {
+  if (value === null) {
+    return undefined
+  }
+
+  return value >= 0 ? "var(--color-chart-3)" : "var(--color-destructive)"
+}
+
 function formatMoney(value: number | null, currency: string) {
   if (value === null) {
     return "-"
@@ -65,9 +94,21 @@ function formatMoney(value: number | null, currency: string) {
   return formatter.format(value)
 }
 
-type PortfolioHolding = PortfolioCurrencyGroup["holdings"][number]
+type PortfolioHolding = PortfolioHoldingGroup["holdings"][number]
+type WeightChartViewMode = "all" | "account" | "market"
 
-function getHoldingLabel(holding: PortfolioCurrencyGroup["holdings"][number]) {
+type WeightChartView = {
+  description: string
+  holdings: PortfolioWeightChartHolding[]
+  selectorLabel: string | null
+  selectorOptions: Array<{ label: string; value: string }>
+  selectorValue: string | null
+}
+
+const TW_TICKER_PATTERN = /^\d{4,6}$/
+const CJK_PATTERN = /\p{Script=Han}/u
+
+function getHoldingLabel(holding: PortfolioHoldingGroup["holdings"][number]) {
   if (
     holding.market === "TW" &&
     holding.quoteTicker &&
@@ -85,33 +126,274 @@ function getHoldingLabel(holding: PortfolioCurrencyGroup["holdings"][number]) {
   }
 }
 
-function getCombinedWeightChartData(groups: PortfolioCurrencyGroup[]) {
-  return groups.flatMap((group) =>
-    group.holdings
-      .filter(
-        (holding) =>
-          (group.currency === "TWD" || group.currency === "USD") &&
-          holding.marketValue !== null
-      )
-      .map((holding) => {
-        const label = getHoldingLabel(holding)
+function getHoldingSubtitle(
+  holding: PortfolioHoldingGroup["holdings"][number]
+) {
+  const parts = [
+    holding.account,
+    holding.exchange ?? "Exchange pending",
+  ].filter(Boolean)
 
-        return {
-          bucket: group.currency as "TWD" | "USD",
-          costBasis: holding.totalCostOpen,
-          key: holding.key,
-          label: label.primary,
-          marketValue: holding.marketValue ?? 0,
-          subtitle: label.secondary,
-        } satisfies PortfolioWeightChartHolding
-      })
+  return parts.length > 0 ? parts.join(" · ") : holding.market
+}
+
+function prefersDescriptiveLabel(currentLabel: string, nextLabel: string) {
+  return TW_TICKER_PATTERN.test(currentLabel) && CJK_PATTERN.test(nextLabel)
+}
+
+function getChartableHoldings(holdings: PortfolioHolding[]) {
+  return holdings.filter(
+    (holding) =>
+      (holding.currency === "TWD" || holding.currency === "USD") &&
+      holding.marketValue !== null
   )
 }
 
-function formatSummary(summary: PortfolioSummary) {
-  return summary.totalMarketValue === null
-    ? `${summary.currency} pending`
-    : `${summary.currency} ${formatMoney(summary.totalMarketValue, summary.currency)}`
+function buildSingleHoldingChartDatum(
+  holding: PortfolioHolding,
+  contextLabel: string,
+  subtitle: string | null
+) {
+  const label = getHoldingLabel(holding)
+
+  return {
+    bucket: holding.currency as "TWD" | "USD",
+    contextLabel,
+    costBasis: holding.totalCostOpen,
+    key: holding.key,
+    label: label.primary,
+    marketValue: holding.marketValue ?? 0,
+    subtitle,
+  } satisfies PortfolioWeightChartHolding
+}
+
+function buildMergedChartData(
+  holdings: PortfolioHolding[],
+  contextLabel: string,
+  subtitleForAccounts: (
+    accounts: string[],
+    market: SupportedMarket
+  ) => string | null
+) {
+  const merged = new Map<
+    string,
+    {
+      accounts: Set<string>
+      bucket: "TWD" | "USD"
+      costBasis: number
+      key: string
+      label: string
+      market: SupportedMarket
+      marketValue: number
+      secondary: string | null
+    }
+  >()
+
+  for (const holding of getChartableHoldings(holdings)) {
+    const label = getHoldingLabel(holding)
+    const canonicalTicker = (holding.quoteTicker ?? holding.ticker)
+      .trim()
+      .toUpperCase()
+    const mergeKey = `${holding.market}:${canonicalTicker}`
+    const accountLabel = holding.account ?? "Unassigned account"
+    const existing = merged.get(mergeKey)
+
+    if (!existing) {
+      merged.set(mergeKey, {
+        accounts: new Set([accountLabel]),
+        bucket: holding.currency as "TWD" | "USD",
+        costBasis: holding.totalCostOpen,
+        key: mergeKey,
+        label: label.primary,
+        market: holding.market,
+        marketValue: holding.marketValue ?? 0,
+        secondary: label.secondary,
+      })
+      continue
+    }
+
+    existing.accounts.add(accountLabel)
+    existing.costBasis += holding.totalCostOpen
+    existing.marketValue += holding.marketValue ?? 0
+
+    if (prefersDescriptiveLabel(existing.label, label.primary)) {
+      existing.label = label.primary
+    }
+
+    if (!existing.secondary && label.secondary) {
+      existing.secondary = label.secondary
+    }
+  }
+
+  return [...merged.values()].map((holding) => {
+    const accounts = [...holding.accounts].sort()
+    const subtitleParts = [
+      holding.secondary,
+      subtitleForAccounts(accounts, holding.market),
+    ].filter(Boolean)
+
+    return {
+      bucket: holding.bucket,
+      contextLabel,
+      costBasis: holding.costBasis,
+      key: holding.key,
+      label: holding.label,
+      marketValue: holding.marketValue,
+      subtitle: subtitleParts.join(" · ") || null,
+    } satisfies PortfolioWeightChartHolding
+  })
+}
+
+function buildWeightChartView({
+  holdings,
+  mode,
+  selectedAccount,
+  selectedMarket,
+}: {
+  holdings: PortfolioHolding[]
+  mode: WeightChartViewMode
+  selectedAccount: string | null
+  selectedMarket: SupportedMarket | null
+}): WeightChartView {
+  const accountOptions = [
+    ...new Set(
+      holdings.map((holding) => holding.account ?? "Unassigned account")
+    ),
+  ]
+    .sort()
+    .map((account) => ({ label: account, value: account }))
+  const marketOptions = [...new Set(holdings.map((holding) => holding.market))]
+    .sort()
+    .map((market) => ({
+      label: market === "US" ? "US market" : "TW market",
+      value: market,
+    }))
+
+  if (mode === "account") {
+    const account = selectedAccount ?? accountOptions[0]?.value ?? null
+    const scopedHoldings = account
+      ? getChartableHoldings(
+          holdings.filter(
+            (holding) => (holding.account ?? "Unassigned account") === account
+          )
+        )
+      : []
+
+    return {
+      description: account
+        ? `Show concentration within ${account}.`
+        : "Show concentration within a selected account.",
+      holdings: scopedHoldings.map((holding) => {
+        const label = getHoldingLabel(holding)
+
+        return buildSingleHoldingChartDatum(
+          holding,
+          account ?? "Account",
+          [label.secondary, holding.market].filter(Boolean).join(" · ") || null
+        )
+      }),
+      selectorLabel: "Account",
+      selectorOptions: accountOptions,
+      selectorValue: account,
+    }
+  }
+
+  if (mode === "market") {
+    const market =
+      selectedMarket ??
+      (marketOptions[0]?.value as SupportedMarket | undefined) ??
+      null
+    const scopedHoldings = market
+      ? holdings.filter((holding) => holding.market === market)
+      : []
+
+    return {
+      description: market
+        ? `Show ${market} holdings merged across accounts.`
+        : "Show holdings merged within a selected market.",
+      holdings: buildMergedChartData(
+        scopedHoldings,
+        market ? `${market} market` : "Market",
+        (accounts) =>
+          accounts.length === 1 ? accounts[0] : `${accounts.length} accounts`
+      ),
+      selectorLabel: "Market",
+      selectorOptions: marketOptions,
+      selectorValue: market,
+    }
+  }
+
+  return {
+    description:
+      "Show all holdings across markets, merged by ticker across accounts.",
+    holdings: buildMergedChartData(
+      holdings,
+      "All holdings",
+      (accounts, market) => {
+        const accountLabel =
+          accounts.length === 1 ? accounts[0] : `${accounts.length} accounts`
+
+        return `${market} · ${accountLabel}`
+      }
+    ),
+    selectorLabel: null,
+    selectorOptions: [],
+    selectorValue: null,
+  }
+}
+
+function formatSummary(
+  summary: PortfolioSummary,
+  fxSnapshot: FxRateSnapshot | null
+) {
+  if (summary.currencies.length !== 1) {
+    return `${summary.label} mixed`
+  }
+
+  const currency = summary.currencies[0]
+
+  if (summary.totalMarketValue === null) {
+    return `${summary.label} pending`
+  }
+
+  if (currency === "USD" && fxSnapshot) {
+    const convertedValue = summary.totalMarketValue * fxSnapshot.rate
+
+    return `${summary.label} ${formatMoney(summary.totalMarketValue, currency)} (${formatMoney(convertedValue, "TWD")})`
+  }
+
+  return `${summary.label} ${formatMoney(summary.totalMarketValue, currency)}`
+}
+
+function getGroupSummary(
+  group: PortfolioHoldingGroup,
+  fxSnapshot: FxRateSnapshot | null
+) {
+  const holdingLabel = `${group.holdings.length} ${group.holdings.length === 1 ? "holding" : "holdings"}`
+  const currencyLabel =
+    group.currencies.length === 1
+      ? group.currencies[0]
+      : `${group.currencies.length} currencies`
+
+  if (group.currencies.length !== 1) {
+    return `${holdingLabel} • ${currencyLabel}.`
+  }
+
+  if (group.totalMarketValue === null) {
+    if (group.missingPriceCount > 0) {
+      return `${holdingLabel} • ${currencyLabel} • waiting on ${group.missingPriceCount} previous close ${group.missingPriceCount === 1 ? "price" : "prices"}.`
+    }
+
+    return `${holdingLabel} • ${currencyLabel} • market value unavailable.`
+  }
+
+  if (group.currencies[0] === "USD" && fxSnapshot) {
+    const convertedValue = group.totalMarketValue * fxSnapshot.rate
+
+    return `${holdingLabel} • total value ${formatMoney(group.totalMarketValue, group.currencies[0])} (${formatMoney(convertedValue, "TWD")}).`
+  }
+
+  return `${holdingLabel} • total value ${formatMoney(group.totalMarketValue, group.currencies[0])}.`
 }
 
 function getPortfolioStatusCopy({
@@ -137,21 +419,11 @@ function getPortfolioStatusCopy({
   }
 }
 
-function getGroupSummary(group: PortfolioCurrencyGroup) {
-  const holdingLabel = `${group.holdings.length} ${group.holdings.length === 1 ? "holding" : "holdings"}`
-
-  if (group.totalMarketValue === null) {
-    if (group.missingPriceCount > 0) {
-      return `${holdingLabel} • waiting on ${group.missingPriceCount} previous close ${group.missingPriceCount === 1 ? "price" : "prices"}.`
-    }
-
-    return `${holdingLabel} • market value unavailable.`
-  }
-
-  return `${holdingLabel} • total value ${formatMoney(group.totalMarketValue, group.currency)}.`
+function getGroupAccentCurrency(group: PortfolioHoldingGroup) {
+  return group.currencies.length === 1 ? group.currencies[0] : null
 }
 
-function getBucketDotColor(currency: string) {
+function getBucketDotColor(currency: string | null) {
   switch (currency) {
     case "TWD":
       return "var(--color-chart-1)"
@@ -162,7 +434,7 @@ function getBucketDotColor(currency: string) {
   }
 }
 
-function getBucketSurfaceClasses(currency: string) {
+function getBucketSurfaceClasses(currency: string | null) {
   switch (currency) {
     case "TWD":
       return {
@@ -184,6 +456,8 @@ function getBucketSurfaceClasses(currency: string) {
 
 function HoldingSummaryCard({ holding }: { holding: PortfolioHolding }) {
   const label = getHoldingLabel(holding)
+  const profitAmount = getProfitAmount(holding)
+  const profitRatio = getProfitRatio(holding)
 
   return (
     <article className="rounded-lg border border-border/70 bg-background/80 px-4 py-3">
@@ -196,7 +470,7 @@ function HoldingSummaryCard({ holding }: { holding: PortfolioHolding }) {
             </p>
           ) : null}
           <p className="truncate text-xs text-muted-foreground">
-            {holding.market} · {holding.exchange ?? "Exchange pending"}
+            {holding.market} · {getHoldingSubtitle(holding)}
           </p>
         </div>
 
@@ -212,6 +486,27 @@ function HoldingSummaryCard({ holding }: { holding: PortfolioHolding }) {
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
         <div>
+          <dt className="text-xs text-muted-foreground">Unrealized P/L</dt>
+          <dd
+            className="tabular-nums"
+            style={{ color: getProfitColor(profitAmount) }}
+          >
+            {formatMoney(profitAmount, holding.currency)}
+          </dd>
+          <p
+            className="text-xs"
+            style={{ color: getProfitColor(profitAmount) }}
+          >
+            {formatPercent(profitRatio)}
+          </p>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Cost basis</dt>
+          <dd className="tabular-nums">
+            {formatMoney(holding.totalCostOpen, holding.currency)}
+          </dd>
+        </div>
+        <div>
           <dt className="text-xs text-muted-foreground">Open qty</dt>
           <dd className="tabular-nums">
             {formatQuantity(holding.quantityOpen)}
@@ -224,10 +519,12 @@ function HoldingSummaryCard({ holding }: { holding: PortfolioHolding }) {
           </dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Cost basis</dt>
-          <dd className="tabular-nums">
-            {formatMoney(holding.totalCostOpen, holding.currency)}
-          </dd>
+          <dt className="text-xs text-muted-foreground">Account</dt>
+          <dd className="truncate">{holding.account ?? "-"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Currency</dt>
+          <dd className="tabular-nums">{holding.currency}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Prev close</dt>
@@ -248,6 +545,7 @@ export const HoldingsTable = memo(function HoldingsTable({
   fxSnapshot,
   fxStatus,
   groups,
+  holdings,
   summaries,
   status,
   issues,
@@ -256,18 +554,36 @@ export const HoldingsTable = memo(function HoldingsTable({
   fxIssue: string | null
   fxSnapshot: FxRateSnapshot | null
   fxStatus: QuoteLoadStatus
-  groups: PortfolioCurrencyGroup[]
+  groups: PortfolioHoldingGroup[]
+  holdings: PortfolioHolding[]
   summaries: PortfolioSummary[]
   status: QuoteLoadStatus
   issues: string[]
   requestError: string | null
 }) {
+  const [weightChartMode, setWeightChartMode] =
+    useState<WeightChartViewMode>("all")
+  const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
+  const [selectedMarket, setSelectedMarket] = useState<SupportedMarket | null>(
+    null
+  )
   const holdingCount = groups.reduce(
     (sum, group) => sum + group.holdings.length,
     0
   )
-  const combinedWeightChartData = getCombinedWeightChartData(groups)
-  const summariesLabel = summaries.map(formatSummary).join(" • ")
+  const chartView = useMemo(
+    () =>
+      buildWeightChartView({
+        holdings,
+        mode: weightChartMode,
+        selectedAccount,
+        selectedMarket,
+      }),
+    [holdings, selectedAccount, selectedMarket, weightChartMode]
+  )
+  const summariesLabel = summaries
+    .map((summary) => formatSummary(summary, fxSnapshot))
+    .join(" • ")
 
   return (
     <section className="surface-analysis overflow-hidden rounded-xl border border-secondary/30 bg-background/80">
@@ -328,21 +644,75 @@ export const HoldingsTable = memo(function HoldingsTable({
               </Alert>
             ) : null}
 
-            {combinedWeightChartData.length > 0 ? (
+            {holdings.length > 0 ? (
               <section className="rounded-lg border border-primary/20 bg-accent/30 px-4 py-3">
-                <div>
-                  <h3 className="text-sm font-medium">Weight chart</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Cross-bucket view for priced holdings.
-                  </p>
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 className="text-sm font-medium">Weight chart</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Switch scope to review overall concentration, account
+                      sleeves, or market exposure.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-2 md:items-end">
+                    <ToggleGroup
+                      onValueChange={(value) => {
+                        if (value) {
+                          setWeightChartMode(value as WeightChartViewMode)
+                        }
+                      }}
+                      size="sm"
+                      type="single"
+                      value={weightChartMode}
+                      variant="outline"
+                    >
+                      <ToggleGroupItem value="all">All</ToggleGroupItem>
+                      <ToggleGroupItem value="account">
+                        Accounts
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="market">Markets</ToggleGroupItem>
+                    </ToggleGroup>
+
+                    {chartView.selectorOptions.length > 0 ? (
+                      <ToggleGroup
+                        onValueChange={(value) => {
+                          if (!value) {
+                            return
+                          }
+
+                          if (weightChartMode === "account") {
+                            setSelectedAccount(value)
+                            return
+                          }
+
+                          setSelectedMarket(value as SupportedMarket)
+                        }}
+                        size="sm"
+                        type="single"
+                        value={chartView.selectorValue ?? undefined}
+                        variant="outline"
+                      >
+                        {chartView.selectorOptions.map((option) => (
+                          <ToggleGroupItem
+                            key={option.value}
+                            value={option.value}
+                          >
+                            {option.label}
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-4">
                   <PortfolioWeightChart
+                    description={chartView.description}
                     fxIssue={fxIssue}
                     fxSnapshot={fxSnapshot}
                     fxStatus={fxStatus}
-                    holdings={combinedWeightChartData}
+                    holdings={chartView.holdings}
                   />
                 </div>
               </section>
@@ -355,26 +725,26 @@ export const HoldingsTable = memo(function HoldingsTable({
             ) : null}
 
             {groups.map((group) => (
-              <section className="space-y-3" key={group.currency}>
+              <section className="space-y-3" key={group.label}>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span
                       className="size-2 rounded-full"
                       style={{
-                        backgroundColor: getBucketDotColor(group.currency),
+                        backgroundColor: getBucketDotColor(
+                          getGroupAccentCurrency(group)
+                        ),
                       }}
                     />
-                    <h3 className="text-base font-medium">
-                      {group.currency} bucket
-                    </h3>
+                    <h3 className="text-base font-medium">{group.label}</h3>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {getGroupSummary(group)}
+                    {getGroupSummary(group, fxSnapshot)}
                   </p>
                 </div>
 
                 <div
-                  className={`overflow-hidden rounded-lg border ${getBucketSurfaceClasses(group.currency).surface}`}
+                  className={`overflow-hidden rounded-lg border ${getBucketSurfaceClasses(getGroupAccentCurrency(group)).surface}`}
                 >
                   <div className="space-y-3 p-3 md:hidden">
                     {group.holdings.map((holding) => (
@@ -383,34 +753,59 @@ export const HoldingsTable = memo(function HoldingsTable({
                   </div>
 
                   <div className="hidden md:block">
-                    <Table className="min-w-[860px]">
+                    <Table className="min-w-[1360px] table-fixed">
                       <TableHeader
                         className={
-                          getBucketSurfaceClasses(group.currency).header
+                          getBucketSurfaceClasses(getGroupAccentCurrency(group))
+                            .header
                         }
                       >
                         <TableRow>
-                          <TableHead>Ticker</TableHead>
-                          <TableHead>Market</TableHead>
-                          <TableHead className="text-right">Open qty</TableHead>
-                          <TableHead className="text-right">Avg cost</TableHead>
+                          <TableHead className="sticky left-0 z-30 min-w-[180px] border-r border-border/60 bg-background/95 shadow-[8px_0_18px_-14px_rgba(0,0,0,0.35)] backdrop-blur supports-[backdrop-filter]:bg-background/90">
+                            Ticker
+                          </TableHead>
+                          <TableHead className="w-[132px] text-right">
+                            P/L
+                          </TableHead>
+                          <TableHead className="w-[92px] text-right">
+                            P/L %
+                          </TableHead>
+                          <TableHead className="w-[92px] text-right">
+                            Weight
+                          </TableHead>
+                          <TableHead className="w-[132px] text-right">
+                            Value
+                          </TableHead>
                           <TableHead className="text-right">
                             Cost basis
+                          </TableHead>
+                          <TableHead className="w-[112px] text-right">
+                            Open qty
+                          </TableHead>
+                          <TableHead className="w-[132px] text-right">
+                            Avg cost
                           </TableHead>
                           <TableHead className="text-right">
                             Prev close
                           </TableHead>
-                          <TableHead className="text-right">Value</TableHead>
-                          <TableHead className="text-right">Weight</TableHead>
+                          <TableHead className="min-w-[160px]">
+                            Account
+                          </TableHead>
+                          <TableHead className="w-[110px]">Market</TableHead>
+                          <TableHead className="w-[92px] text-right">
+                            Currency
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {group.holdings.map((holding) => {
                           const label = getHoldingLabel(holding)
+                          const profitAmount = getProfitAmount(holding)
+                          const profitRatio = getProfitRatio(holding)
 
                           return (
                             <TableRow key={holding.key}>
-                              <TableCell>
+                              <TableCell className="sticky left-0 z-20 border-r border-border/50 bg-background/95 shadow-[8px_0_18px_-14px_rgba(0,0,0,0.28)] backdrop-blur supports-[backdrop-filter]:bg-background/90">
                                 <div className="flex min-w-0 flex-col gap-0.5">
                                   <span className="font-medium">
                                     {label.primary}
@@ -422,15 +817,32 @@ export const HoldingsTable = memo(function HoldingsTable({
                                   ) : null}
                                 </div>
                               </TableCell>
-                              <TableCell>
-                                <div className="flex min-w-0 flex-col gap-0.5">
-                                  <span className="font-medium">
-                                    {holding.market}
-                                  </span>
-                                  <span className="truncate text-xs text-muted-foreground">
-                                    {holding.exchange ?? "Exchange pending"}
-                                  </span>
-                                </div>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={{ color: getProfitColor(profitAmount) }}
+                              >
+                                {formatMoney(profitAmount, holding.currency)}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums"
+                                style={{ color: getProfitColor(profitAmount) }}
+                              >
+                                {formatPercent(profitRatio)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatPercent(holding.weight)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(
+                                  holding.marketValue,
+                                  holding.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatMoney(
+                                  holding.totalCostOpen,
+                                  holding.currency
+                                )}
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {formatQuantity(holding.quantityOpen)}
@@ -438,12 +850,6 @@ export const HoldingsTable = memo(function HoldingsTable({
                               <TableCell className="text-right tabular-nums">
                                 {formatMoney(
                                   holding.averageCost,
-                                  holding.currency
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatMoney(
-                                  holding.totalCostOpen,
                                   holding.currency
                                 )}
                               </TableCell>
@@ -462,14 +868,23 @@ export const HoldingsTable = memo(function HoldingsTable({
                                   </span>
                                 </div>
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatMoney(
-                                  holding.marketValue,
-                                  holding.currency
-                                )}
+                              <TableCell>
+                                <span className="text-sm text-foreground">
+                                  {holding.account ?? "-"}
+                                </span>
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatPercent(holding.weight)}
+                              <TableCell>
+                                <div className="flex min-w-0 flex-col gap-0.5">
+                                  <span className="font-medium">
+                                    {holding.market}
+                                  </span>
+                                  <span className="truncate text-xs text-muted-foreground">
+                                    {holding.exchange ?? "Exchange pending"}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-medium tabular-nums">
+                                {holding.currency}
                               </TableCell>
                             </TableRow>
                           )
@@ -477,24 +892,73 @@ export const HoldingsTable = memo(function HoldingsTable({
                       </TableBody>
                       <TableFooter>
                         <TableRow>
-                          <TableCell className="font-medium" colSpan={4}>
-                            Total
+                          <TableCell className="font-medium">Total</TableCell>
+                          <TableCell
+                            className="text-right tabular-nums"
+                            style={{
+                              color:
+                                group.currencies.length === 1 &&
+                                group.totalMarketValue !== null &&
+                                group.totalCostOpen !== null
+                                  ? getProfitColor(
+                                      group.totalMarketValue -
+                                        group.totalCostOpen
+                                    )
+                                  : undefined,
+                            }}
+                          >
+                            {group.currencies.length === 1 &&
+                            group.totalMarketValue !== null &&
+                            group.totalCostOpen !== null
+                              ? formatMoney(
+                                  group.totalMarketValue - group.totalCostOpen,
+                                  group.currencies[0]
+                                )
+                              : "-"}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(group.totalCostOpen, group.currency)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            -
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(
-                              group.totalMarketValue,
-                              group.currency
-                            )}
+                          <TableCell
+                            className="text-right tabular-nums"
+                            style={{
+                              color:
+                                group.currencies.length === 1 &&
+                                group.totalMarketValue !== null &&
+                                group.totalCostOpen !== null
+                                  ? getProfitColor(
+                                      group.totalMarketValue -
+                                        group.totalCostOpen
+                                    )
+                                  : undefined,
+                            }}
+                          >
+                            {group.currencies.length === 1 &&
+                            group.totalMarketValue !== null &&
+                            group.totalCostOpen !== null &&
+                            group.totalCostOpen > 0
+                              ? formatPercent(
+                                  (group.totalMarketValue -
+                                    group.totalCostOpen) /
+                                    group.totalCostOpen
+                                )
+                              : "-"}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
                             {group.totalMarketValue === null ? "-" : "100.00%"}
                           </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(
+                              group.totalMarketValue,
+                              group.currencies[0] ?? "USD"
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {group.currencies.length === 1
+                              ? formatMoney(
+                                  group.totalCostOpen,
+                                  group.currencies[0]
+                                )
+                              : "-"}
+                          </TableCell>
+                          <TableCell colSpan={6} />
                         </TableRow>
                       </TableFooter>
                     </Table>

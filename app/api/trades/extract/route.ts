@@ -9,6 +9,7 @@ import {
 } from "@/lib/trades/constants"
 import { extractTradesFromFile } from "@/lib/trades/extract"
 import {
+  computeTradeTotalAmount,
   extractTradesRequestSchema,
   type FileExtractionResult,
   type TradeTableRow,
@@ -93,9 +94,21 @@ export async function POST(request: Request) {
 
   const rows: TradeTableRow[] = results.flatMap((result) =>
     result.trades.map((trade) => ({
-      ...trade,
+      account: null,
+      currency: trade.currency,
+      date: trade.date,
       id: crypto.randomUUID(),
+      price: trade.price,
+      quantity: trade.quantity,
+      side: trade.side,
       sourceFile: result.fileName,
+      ticker: trade.ticker,
+      totalAmount: computeTradeTotalAmount({
+        fee: trade.fee,
+        price: trade.price,
+        quantity: trade.quantity,
+        side: trade.side,
+      }),
     }))
   )
 

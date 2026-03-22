@@ -9,44 +9,58 @@ import type { PreviousCloseQuote } from "@/lib/portfolio/schema"
 
 function makeTrade(
   overrides: Partial<{
+    account: string | null
     currency: string | null
     date: string
-    fee: number | null
     id: string
     price: number
     quantity: number
     side: "BUY" | "SELL"
     ticker: string
+    totalAmount: number
   }>
 ) {
-  return {
+  const trade = {
+    account: null,
     currency: "USD",
     date: "2026-01-01",
-    fee: 0,
     id: crypto.randomUUID(),
     price: 100,
     quantity: 1,
     side: "BUY" as const,
     ticker: "AAPL",
+    totalAmount: 100,
     ...overrides,
+  }
+
+  return {
+    ...trade,
+    totalAmount: overrides.totalAmount ?? trade.price * trade.quantity,
   }
 }
 
 describe("aggregateHoldings", () => {
-  it("computes average cost across multiple buys including buy fees", () => {
+  it("computes average cost from final buy totals", () => {
     const result = aggregateHoldings([
-      makeTrade({ fee: 1, price: 100, quantity: 10 }),
-      makeTrade({ date: "2026-01-02", fee: 1, price: 120, quantity: 10 }),
+      makeTrade({ price: 100, quantity: 10, totalAmount: 1001 }),
+      makeTrade({
+        date: "2026-01-02",
+        price: 120,
+        quantity: 10,
+        totalAmount: 1201,
+      }),
     ])
 
     expect(result.issues).toEqual([])
     expect(result.holdings).toEqual([
       {
+        account: null,
         averageCost: 110.1,
         currency: "USD",
         key: "US:AAPL",
         market: "US",
         quantityOpen: 20,
+        quoteKey: "US:AAPL",
         ticker: "AAPL",
         totalCostOpen: 2202,
       },
@@ -56,13 +70,18 @@ describe("aggregateHoldings", () => {
   it("keeps average cost stable after a partial sell", () => {
     const result = aggregateHoldings([
       makeTrade({ price: 100, quantity: 10 }),
-      makeTrade({ date: "2026-01-02", price: 120, quantity: 10 }),
+      makeTrade({
+        date: "2026-01-02",
+        price: 120,
+        quantity: 10,
+        totalAmount: 1200,
+      }),
       makeTrade({
         date: "2026-01-03",
-        fee: 7,
         price: 130,
         quantity: 5,
         side: "SELL",
+        totalAmount: 643,
       }),
     ])
 
@@ -113,20 +132,53 @@ describe("aggregateHoldings", () => {
     ])
 
     expect(result.holdings[0]).toMatchObject({
+      account: null,
       currency: "TWD",
       key: "TW:2330",
       market: "TW",
+      quoteKey: "TW:2330",
       ticker: "2330",
     })
+  })
+
+  it("keeps same ticker separate across accounts", () => {
+    const result = aggregateHoldings([
+      makeTrade({ account: "Firstrade", quantity: 10, ticker: "AAPL" }),
+      makeTrade({
+        account: "IBKR",
+        date: "2026-01-02",
+        quantity: 5,
+        ticker: "AAPL",
+      }),
+    ])
+
+    expect(result.issues).toEqual([])
+    expect(result.holdings).toHaveLength(2)
+    expect(result.holdings.map((holding) => holding.key)).toEqual([
+      "US:AAPL:FIRSTRADE",
+      "US:AAPL:IBKR",
+    ])
   })
 })
 
 describe("applyPreviousCloseQuotes", () => {
   it("computes market value and weight per currency bucket", () => {
     const { holdings } = aggregateHoldings([
-      makeTrade({ price: 100, quantity: 10, ticker: "AAPL" }),
-      makeTrade({ date: "2026-01-02", price: 50, quantity: 5, ticker: "MSFT" }),
       makeTrade({
+        account: "Firstrade",
+        price: 100,
+        quantity: 10,
+        ticker: "AAPL",
+      }),
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-01-02",
+        price: 50,
+        quantity: 5,
+        ticker: "MSFT",
+      }),
+      makeTrade({
+        account: "元大台股",
         ticker: "2330",
         currency: "TWD",
         date: "2026-01-03",
@@ -169,8 +221,8 @@ describe("applyPreviousCloseQuotes", () => {
     }
 
     const result = applyPreviousCloseQuotes(holdings, quotesByKey)
-    const usdGroup = result.groups.find((group) => group.currency === "USD")
-    const twdGroup = result.groups.find((group) => group.currency === "TWD")
+    const usdGroup = result.groups.find((group) => group.label === "Firstrade")
+    const twdGroup = result.groups.find((group) => group.label === "元大台股")
 
     expect(usdGroup?.totalMarketValue).toBe(1750)
     expect(usdGroup?.holdings[0]).toMatchObject({
@@ -233,7 +285,9 @@ describe("applyPreviousCloseQuotes", () => {
     }
 
     const result = applyPreviousCloseQuotes(holdings, quotesByKey)
-    const twdGroup = result.groups.find((group) => group.currency === "TWD")
+    const twdGroup = result.groups.find(
+      (group) => group.label === "Unassigned account"
+    )
 
     expect(twdGroup?.holdings).toHaveLength(1)
     expect(twdGroup?.holdings[0]).toMatchObject({
@@ -272,7 +326,9 @@ describe("applyPreviousCloseQuotes", () => {
     }
 
     const result = applyPreviousCloseQuotes(holdings, quotesByKey)
-    const usdGroup = result.groups.find((group) => group.currency === "USD")
+    const usdGroup = result.groups.find(
+      (group) => group.label === "Unassigned account"
+    )
 
     expect(usdGroup?.totalMarketValue).toBeNull()
     expect(usdGroup?.missingPriceCount).toBe(1)
@@ -285,6 +341,50 @@ describe("applyPreviousCloseQuotes", () => {
       marketValue: null,
       ticker: "MSFT",
       weight: null,
+    })
+  })
+
+  it("reuses the same quote across accounts for one ticker", () => {
+    const { holdings } = aggregateHoldings([
+      makeTrade({ account: "Firstrade", quantity: 10, ticker: "AAPL" }),
+      makeTrade({
+        account: "IBKR",
+        date: "2026-01-02",
+        quantity: 5,
+        ticker: "AAPL",
+      }),
+    ])
+
+    const quotesByKey: Record<string, PreviousCloseQuote> = {
+      [getHoldingKey({ market: "US", ticker: "AAPL" })]: {
+        asOf: "2026-03-17",
+        currency: "USD",
+        exchange: "NASDAQ",
+        key: "US:AAPL",
+        market: "US",
+        micCode: "XNAS",
+        previousClose: 150,
+        ticker: "AAPL",
+      },
+    }
+
+    const result = applyPreviousCloseQuotes(holdings, quotesByKey)
+    const firstradeGroup = result.groups.find(
+      (group) => group.label === "Firstrade"
+    )
+    const ibkrGroup = result.groups.find((group) => group.label === "IBKR")
+
+    expect(firstradeGroup?.holdings).toHaveLength(1)
+    expect(firstradeGroup?.holdings[0]).toMatchObject({
+      account: "Firstrade",
+      marketValue: 1500,
+      ticker: "AAPL",
+    })
+    expect(ibkrGroup?.holdings).toHaveLength(1)
+    expect(ibkrGroup?.holdings[0]).toMatchObject({
+      account: "IBKR",
+      marketValue: 750,
+      ticker: "AAPL",
     })
   })
 })

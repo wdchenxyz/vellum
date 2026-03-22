@@ -27,3 +27,6 @@
 - Fixed the primary CTA name, labeled the optional note field, and restored success-state contrast.
 - Increased touch targets, removed the hidden theme hotkey, and made attachment removal easier on touch devices.
 - Added mobile card views for trade and holding review, tokenized surface styling, and capped chart growth for large portfolios.
+- Added optional account metadata to stored trade rows so holdings can stay separated by broker account.
+- Added persistent quote caching so repeated refreshes reuse recent previous-close and USD/TWD snapshots instead of hitting upstream quote APIs every time.
+- Refactored the portfolio weight chart around user goals: all-holdings, by-account, and by-market views, with merged ticker bars across accounts where appropriate.
