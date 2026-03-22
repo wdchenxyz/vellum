@@ -204,9 +204,12 @@ export function computeBenchmarkSeries(
   // Sort trades chronologically with stable tiebreaker.
   const sortedTrades = stableSortTrades(trades)
 
-  // Determine if trades happen before the first trading date.
+  // Determine if trades happen before the first date with benchmark prices.
   const earliestTradeDate =
     sortedTrades.length > 0 ? sortedTrades[0].trade.date : null
+  const firstBenchDate = tradingDates.find(
+    (d) => getBenchmarkPriceTwd(d) !== null
+  )
 
   // Walk trades and accumulate benchmark units.
   let benchmarkUnits = 0
@@ -215,13 +218,13 @@ export function computeBenchmarkSeries(
   const series: DailyValuePoint[] = []
 
   // Add synthetic cost-basis start point (same as portfolio) so all three
-  // lines begin at the same value.
+  // lines begin at the same value on the trade date.
   if (
     earliestTradeDate !== null &&
-    tradingDates.length > 0 &&
-    earliestTradeDate < tradingDates[0]
+    firstBenchDate !== undefined &&
+    earliestTradeDate < firstBenchDate
   ) {
-    const costTwd = computeTotalCostTwd(trades, fxRates, tradingDates[0])
+    const costTwd = computeTotalCostTwd(trades, fxRates, firstBenchDate)
 
     if (costTwd > 0) {
       series.push({ date: earliestTradeDate, value: Math.round(costTwd) })
