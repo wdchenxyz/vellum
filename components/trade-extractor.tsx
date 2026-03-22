@@ -101,18 +101,11 @@ function AttachmentTray() {
   return (
     <div className="flex w-full flex-col gap-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-primary">
-            {fileCount === 0
-              ? "Drop screenshots or PDFs here."
-              : `Ready to extract ${fileCount} ${pluralize(fileCount, "file")}.`}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {fileCount === 0
-              ? "Drag files into this box or browse from your device."
-              : "Remove anything you do not want to process before submitting."}
-          </p>
-        </div>
+        <p className="text-sm font-medium text-primary">
+          {fileCount === 0
+            ? "Drop screenshots or PDFs here."
+            : `Ready to extract ${fileCount} ${pluralize(fileCount, "file")}.`}
+        </p>
         <BrowseFilesButton />
       </div>
 
@@ -137,7 +130,6 @@ function AttachmentTray() {
 
 function OptionalNote() {
   const textareaId = useId()
-  const descriptionId = `${textareaId}-description`
 
   return (
     <details className="group border-t border-border/70 bg-secondary/15 px-4 py-3">
@@ -148,20 +140,7 @@ function OptionalNote() {
         </span>
         <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
       </summary>
-      <label
-        className="mt-2 block text-sm font-medium text-foreground"
-        htmlFor={textareaId}
-      >
-        Context note
-      </label>
-      <p
-        className="mt-1 max-w-2xl text-sm text-muted-foreground"
-        id={descriptionId}
-      >
-        Use this only when the document needs extra context.
-      </p>
       <PromptInputTextarea
-        aria-describedby={descriptionId}
         className="mt-3 min-h-20"
         id={textareaId}
         placeholder="Example: ignore account summary totals and extract only filled trades."
@@ -516,10 +495,6 @@ export function TradeExtractor() {
           <h2 className="text-lg font-medium tracking-tight">
             Add confirmations
           </h2>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            Start with the files. Add a note only when the document needs extra
-            context.
-          </p>
         </div>
 
         {uploadIssue ? (
@@ -592,8 +567,6 @@ export function TradeExtractor() {
           holdings={valuedPortfolio.holdings}
           issues={aggregatedPortfolio.issues}
           requestError={quoteRequestIssue}
-          status={quoteStatus}
-          summaries={valuedPortfolio.summaries}
         />
       ) : null}
 
