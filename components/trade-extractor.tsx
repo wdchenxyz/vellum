@@ -49,6 +49,7 @@ import {
   deleteTradesResponseSchema,
   extractTradesResponseSchema,
   tradeRowsResponseSchema,
+  updateTradeResponseSchema,
   type ExtractTradesResponse,
   type TradeTableRow,
 } from "@/lib/trades/schema"
@@ -498,13 +499,13 @@ export function TradeExtractor() {
     }
   }, [rows])
 
-  const handleDeleteTrade = useCallback(async (id: string) => {
+  const handleDeleteTrades = useCallback(async (ids: string[]) => {
     setDeleteIssue(null)
 
     const response = await fetch("/api/trades/rows", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: [id] }),
+      body: JSON.stringify({ ids }),
     })
 
     if (!response.ok) {
@@ -524,6 +525,36 @@ export function TradeExtractor() {
 
     setRows(parsed.data.rows)
   }, [])
+
+  const handleUpdateTrade = useCallback(
+    async (id: string, fields: Record<string, string | number | null>) => {
+      setDeleteIssue(null)
+
+      const response = await fetch("/api/trades/rows", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, fields }),
+      })
+
+      if (!response.ok) {
+        const message = await readErrorMessage(response)
+        setDeleteIssue(message)
+        throw new Error(message)
+      }
+
+      const payload = await response.json()
+      const parsed = updateTradeResponseSchema.safeParse(payload)
+
+      if (!parsed.success) {
+        const message = "The server returned an unexpected response."
+        setDeleteIssue(message)
+        throw new Error(message)
+      }
+
+      setRows(parsed.data.rows)
+    },
+    []
+  )
 
   async function handleSubmit(message: PromptInputMessage) {
     if (message.files.length === 0) {
@@ -720,7 +751,8 @@ export function TradeExtractor() {
 
       <TradesTable
         issues={successMessage ? issues : []}
-        onDelete={handleDeleteTrade}
+        onDelete={handleDeleteTrades}
+        onUpdate={handleUpdateTrade}
         restoreIssue={deleteIssue ?? restoreIssue}
         rows={rows}
         successMessage={successMessage}

@@ -1,9 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server"
 
-import { deleteTradesRequestSchema } from "@/lib/trades/schema"
+import {
+  deleteTradesRequestSchema,
+  updateTradeRequestSchema,
+} from "@/lib/trades/schema"
 import {
   deleteStoredTradeRows,
   readStoredTradeRows,
+  updateStoredTradeRow,
 } from "@/lib/trades/storage"
 
 export const dynamic = "force-dynamic"
@@ -27,6 +31,31 @@ export async function GET() {
       error instanceof Error && error.message
         ? error.message
         : "Unable to load stored transactions."
+
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const parsed = updateTradeRequestSchema.safeParse(body)
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid update payload." },
+        { status: 400 }
+      )
+    }
+
+    const rows = await updateStoredTradeRow(parsed.data)
+
+    return NextResponse.json({ rows })
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Unable to update the requested trade."
 
     return NextResponse.json({ error: message }, { status: 500 })
   }

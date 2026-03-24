@@ -179,6 +179,30 @@ export const deleteTradesResponseSchema = z.object({
   rows: z.array(tradeTableRowSchema),
 })
 
+export const updateTradeRequestSchema = z.object({
+  id: z.string().min(1),
+  fields: z.object({
+    date: z
+      .string()
+      .min(1)
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format.")
+      .optional(),
+    ticker: z.string().min(1).optional(),
+    side: tradeSideSchema.optional(),
+    quantity: z.number().finite().positive().optional(),
+    price: z.number().finite().positive().optional(),
+    currency: z.string().trim().min(1).nullable().optional(),
+    account: z.string().trim().min(1).nullable().optional(),
+  }),
+})
+
+export const updateTradeResponseSchema = z.object({
+  rows: z.array(tradeTableRowSchema),
+})
+
+export type UpdateTradeRequest = z.infer<typeof updateTradeRequestSchema>
+export type UpdateTradeResponse = z.infer<typeof updateTradeResponseSchema>
+
 export type DeleteTradesRequest = z.infer<typeof deleteTradesRequestSchema>
 export type DeleteTradesResponse = z.infer<typeof deleteTradesResponseSchema>
 export type ExtractTradesResponse = z.infer<typeof extractTradesResponseSchema>

@@ -3,7 +3,12 @@ import "server-only"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 
-import { storedTradeRowSchema, type TradeTableRow } from "@/lib/trades/schema"
+import {
+  computeTradeTotalAmount,
+  storedTradeRowSchema,
+  type TradeTableRow,
+  type UpdateTradeRequest,
+} from "@/lib/trades/schema"
 import { z } from "zod"
 
 const storedTradeRowsSchema = z.array(storedTradeRowSchema)
@@ -65,6 +70,44 @@ export async function appendStoredTradeRows(
 
     const existingRows = await readStoredTradeRows(filePath)
     const nextRows = [...existingRows, ...rows]
+
+    await writeFile(filePath, `${JSON.stringify(nextRows, null, 2)}\n`, "utf8")
+
+    return nextRows
+  })
+}
+
+export async function updateStoredTradeRow(
+  update: UpdateTradeRequest,
+  filePath = getTradeStoreFilePath()
+) {
+  return withWriteLock(async () => {
+    await ensureTradeStoreFile(filePath)
+
+    const existingRows = await readStoredTradeRows(filePath)
+    const index = existingRows.findIndex((row) => row.id === update.id)
+
+    if (index === -1) {
+      throw new Error(`Trade with id "${update.id}" not found.`)
+    }
+
+    const current = existingRows[index]
+    const merged = { ...current, ...update.fields }
+    const totalAmount = computeTradeTotalAmount({
+      fee: null,
+      price: merged.price,
+      quantity: merged.quantity,
+      side: merged.side,
+    })
+
+    const updatedRow: TradeTableRow = {
+      ...current,
+      ...update.fields,
+      totalAmount,
+    }
+
+    const nextRows = [...existingRows]
+    nextRows[index] = updatedRow
 
     await writeFile(filePath, `${JSON.stringify(nextRows, null, 2)}\n`, "utf8")
 
