@@ -25,6 +25,9 @@ const EMPTY_HISTORY_CACHE: HistoryCache = {
 /** Cached data is considered fresh if the latest entry is from today. */
 const HISTORY_CACHE_TTL_MS = 12 * 60 * 60 * 1000
 
+/** Stale data is still usable — returned immediately while refreshed in background. */
+const HISTORY_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
 export type DailyPriceSeries = Record<string, number>
 
 let writeQueue = Promise.resolve()
@@ -102,8 +105,19 @@ function isFresh(cachedAt: string) {
   return Date.now() - cachedAtMs < HISTORY_CACHE_TTL_MS
 }
 
+function isUsable(cachedAt: string) {
+  const cachedAtMs = new Date(cachedAt).getTime()
+
+  if (!Number.isFinite(cachedAtMs)) {
+    return false
+  }
+
+  return Date.now() - cachedAtMs < HISTORY_STALE_TTL_MS
+}
+
 export type PriceCacheResult = {
   fresh: boolean
+  usable: boolean
   prices: DailyPriceSeries
 }
 
@@ -118,7 +132,11 @@ export async function getCachedTickerHistory(
     return null
   }
 
-  return { fresh: isFresh(entry.cachedAt), prices: entry.prices }
+  return {
+    fresh: isFresh(entry.cachedAt),
+    usable: isUsable(entry.cachedAt),
+    prices: entry.prices,
+  }
 }
 
 export async function setCachedTickerHistory(
@@ -148,6 +166,7 @@ export async function getCachedFxHistory({
 
   return {
     fresh: isFresh(cache.fxRates.cachedAt),
+    usable: isUsable(cache.fxRates.cachedAt),
     prices: cache.fxRates.prices,
   }
 }

@@ -2,13 +2,18 @@ import "server-only"
 
 import { getHoldingKey, inferSupportedMarket } from "@/lib/portfolio/holdings"
 import {
+  type CachedInstrument,
+  type FxSnapshotCacheResult,
   getCachedFxSnapshot,
+  getCachedInstrumentResolution,
   getCachedPreviousCloseQuotes,
   setCachedFxSnapshot,
+  setCachedInstrumentResolution,
   setCachedPreviousCloseQuotes,
 } from "@/lib/quotes/cache"
 import { fetchTaiwanPreviousClose } from "@/lib/quotes/taiwan-prices"
 import { resolveTaiwanTickerByName } from "@/lib/quotes/taiwan-symbols"
+import { enqueue } from "@/lib/quotes/throttle"
 import type {
   PreviousCloseLookupTarget,
   PreviousCloseQuote,
@@ -19,6 +24,8 @@ import { z } from "zod"
 const TWELVE_DATA_BASE_URL = "https://api.twelvedata.com"
 const US_MIC_PRIORITY = ["XNMS", "XNGS", "XNAS", "XNYS", "ARCX", "BATS", "XASE"]
 const TW_MIC_PRIORITY = ["XTAI", "ROCO"]
+
+const RATE_LIMIT_RETRY_DELAY_MS = 15_000
 
 const twelveDataErrorSchema = z.object({
   status: z.literal("error"),
@@ -123,36 +130,69 @@ export function parseDecimal(value: string) {
   return parsed
 }
 
+function isRateLimitError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return msg.includes("rate limit") || msg.includes("too many requests")
+  }
+  return false
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Core fetch helper. Runs through the throttle queue and retries once on
+ * rate-limit errors after a cooldown.
+ */
 export async function fetchTwelveDataJson(
   pathname: string,
   params: Record<string, string | undefined>,
   fetcher: typeof fetch
 ) {
-  const response = await fetcher(buildTwelveDataUrl(pathname, params), {
-    cache: "no-store",
-    headers: {
-      Authorization: getAuthorizationHeader(),
-    },
+  async function doFetch() {
+    const response = await fetcher(buildTwelveDataUrl(pathname, params), {
+      cache: "no-store",
+      headers: {
+        Authorization: getAuthorizationHeader(),
+      },
+    })
+
+    const payload = await response.json().catch(() => null)
+    const maybeError = twelveDataErrorSchema.safeParse(payload)
+
+    if (maybeError.success) {
+      throw new Error(maybeError.data.message)
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Twelve Data request failed with status ${response.status}.`
+      )
+    }
+
+    if (!payload) {
+      throw new Error("Twelve Data returned an empty response.")
+    }
+
+    return payload
+  }
+
+  return enqueue(async () => {
+    try {
+      return await doFetch()
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        console.warn(
+          `[twelve-data] Rate limited on ${pathname}, retrying in ${RATE_LIMIT_RETRY_DELAY_MS / 1000}s...`
+        )
+        await sleep(RATE_LIMIT_RETRY_DELAY_MS)
+        return await doFetch()
+      }
+      throw error
+    }
   })
-
-  const payload = await response.json().catch(() => null)
-  const maybeError = twelveDataErrorSchema.safeParse(payload)
-
-  if (maybeError.success) {
-    throw new Error(maybeError.data.message)
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      `Twelve Data request failed with status ${response.status}.`
-    )
-  }
-
-  if (!payload) {
-    throw new Error("Twelve Data returned an empty response.")
-  }
-
-  return payload
 }
 
 export function selectInstrumentMatch(
@@ -194,7 +234,7 @@ export function selectInstrumentMatch(
 async function resolveInstrument(
   target: PreviousCloseLookupTarget,
   fetcher: typeof fetch
-) {
+): Promise<CachedInstrument> {
   if (target.market === "TW") {
     const resolvedTaiwanTicker = await resolveTaiwanTickerByName(
       target.ticker,
@@ -216,6 +256,14 @@ async function resolveInstrument(
       mic_code: resolvedTaiwanTicker.micCode,
       symbol: resolvedTaiwanTicker.symbol,
     }
+  }
+
+  // Check instrument resolution cache first
+  const cacheKey = getHoldingKey({ market: target.market, ticker: target.ticker })
+  const cached = await getCachedInstrumentResolution(cacheKey)
+
+  if (cached) {
+    return cached
   }
 
   const lookupSymbol = target.ticker.trim().toUpperCase()
@@ -244,6 +292,9 @@ async function resolveInstrument(
       `No supported ${getCountryName(target.market)} listing was found for ${target.ticker}.`
     )
   }
+
+  // Cache the resolution for future use
+  await setCachedInstrumentResolution(cacheKey, instrument)
 
   return instrument
 }
@@ -313,10 +364,15 @@ export async function fetchPreviousCloseSnapshots(
   targets: PreviousCloseLookupTarget[],
   fetcher: typeof fetch = fetch
 ): Promise<PreviousCloseQuote[]> {
-  const { missingTargets, quotesByKey } =
+  const { freshQuotes, staleTargets, staleQuotes, missingTargets } =
     await getCachedPreviousCloseQuotes(targets)
+
+  // Targets that truly need fetching before we can respond
+  const mustFetchTargets = missingTargets
+
+  // Fetch missing quotes (blocking — we have no data for these)
   const fetchedQuotes = await Promise.all(
-    missingTargets.map(async (target) => {
+    mustFetchTargets.map(async (target) => {
       try {
         return await fetchPreviousClose(target, fetcher)
       } catch (error) {
@@ -337,6 +393,17 @@ export async function fetchPreviousCloseSnapshots(
 
   await setCachedPreviousCloseQuotes(fetchedQuotes)
 
+  // Background refresh for stale entries (fire-and-forget)
+  if (staleTargets.length > 0) {
+    void refreshStaleQuotes(staleTargets, fetcher)
+  }
+
+  // Merge all results: fresh + stale + freshly fetched
+  const quotesByKey: Record<string, PreviousCloseQuote> = {
+    ...freshQuotes,
+    ...staleQuotes,
+  }
+
   for (const quote of fetchedQuotes) {
     quotesByKey[quote.key] = quote
   }
@@ -347,13 +414,46 @@ export async function fetchPreviousCloseSnapshots(
   })
 }
 
-export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
-  const cachedSnapshot = await getCachedFxSnapshot("USD/TWD")
+async function refreshStaleQuotes(
+  targets: PreviousCloseLookupTarget[],
+  fetcher: typeof fetch
+) {
+  const refreshed: PreviousCloseQuote[] = []
 
-  if (cachedSnapshot) {
-    return cachedSnapshot
+  for (const target of targets) {
+    try {
+      refreshed.push(await fetchPreviousClose(target, fetcher))
+    } catch (error) {
+      console.warn(
+        `[twelve-data] Background refresh failed for ${target.ticker}:`,
+        getErrorMessage(error)
+      )
+    }
   }
 
+  await setCachedPreviousCloseQuotes(refreshed).catch((error) => {
+    console.warn("[twelve-data] Failed to write refreshed quotes:", error)
+  })
+}
+
+export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
+  const cachedResult: FxSnapshotCacheResult = await getCachedFxSnapshot("USD/TWD")
+
+  if (cachedResult?.fresh) {
+    return cachedResult.snapshot
+  }
+
+  // If we have stale data, return it and refresh in background
+  if (cachedResult && !cachedResult.fresh) {
+    void refreshFxSnapshot(fetcher)
+    return cachedResult.snapshot
+  }
+
+  // No cached data at all — must fetch
+  return await fetchFreshFxSnapshot(fetcher)
+}
+
+async function fetchFreshFxSnapshot(fetcher: typeof fetch) {
   const payload = await fetchTwelveDataJson(
     "/eod",
     {
@@ -376,4 +476,15 @@ export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
   await setCachedFxSnapshot(snapshot)
 
   return snapshot
+}
+
+async function refreshFxSnapshot(fetcher: typeof fetch) {
+  try {
+    await fetchFreshFxSnapshot(fetcher)
+  } catch (error) {
+    console.warn(
+      "[twelve-data] Background FX refresh failed:",
+      getErrorMessage(error)
+    )
+  }
 }
