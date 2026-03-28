@@ -6,7 +6,7 @@ import {
   type UIMessage,
 } from "ai"
 
-import { CHAT_SYSTEM_PROMPT, chatTools } from "@/lib/agents/chat-agent"
+import { allTools, buildSystemPrompt } from "@/lib/agents/skills"
 import { DEFAULT_MODEL } from "@/lib/trades/constants"
 
 export const maxDuration = 60
@@ -16,9 +16,9 @@ export async function POST(request: Request) {
 
   const result = streamText({
     model: gateway(DEFAULT_MODEL),
-    system: CHAT_SYSTEM_PROMPT,
+    system: buildSystemPrompt(),
     messages: await convertToModelMessages(messages),
-    tools: chatTools,
+    tools: allTools,
     stopWhen: stepCountIs(5),
   })
 
