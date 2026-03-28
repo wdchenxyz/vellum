@@ -1,4 +1,5 @@
 import { ChatLayout, ChatTrigger } from "@/components/chat-drawer"
+import { CommandPalette } from "@/components/command-palette"
 import { PaletteToggle } from "@/components/palette-toggle"
 import { TradeExtractor } from "@/components/trade-extractor"
 
@@ -20,6 +21,7 @@ export default function Page() {
           <TradeExtractor />
         </div>
       </main>
+      <CommandPalette />
     </ChatLayout>
   )
 }
