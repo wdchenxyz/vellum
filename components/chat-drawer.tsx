@@ -280,6 +280,22 @@ export function ChatLayout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
 
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "j" && e.metaKey && !e.shiftKey) {
+        e.preventDefault()
+        setOpen((o) => !o)
+      }
+      if (e.key === "." && e.metaKey) {
+        e.preventDefault()
+        setOpen(true)
+        setExpanded((ex) => !ex)
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown)
+    return () => document.removeEventListener("keydown", handleKeyDown)
+  }, [])
+
   return (
     <ChatDrawerContext.Provider value={{ open, setOpen, expanded, setExpanded }}>
       <ChatStateProvider>
