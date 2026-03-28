@@ -94,6 +94,18 @@ async function ensureQuoteCacheFile(filePath: string) {
   }
 }
 
+/** Serialize all cache file access to prevent concurrent read-modify-write corruption. */
+let cacheFileLock: Promise<void> = Promise.resolve()
+
+function withCacheLock<T>(fn: () => Promise<T>): Promise<T> {
+  const pending = cacheFileLock.then(fn)
+  cacheFileLock = pending.then(
+    () => undefined,
+    () => undefined
+  )
+  return pending
+}
+
 async function readQuoteCache(filePath = getQuoteCacheFilePath()) {
   await ensureQuoteCacheFile(filePath)
   const rawContent = await readFile(filePath, "utf8")
@@ -173,29 +185,31 @@ export async function getCachedPreviousCloseQuotes(
   return { freshQuotes, staleTargets, staleQuotes, missingTargets }
 }
 
-export async function setCachedPreviousCloseQuotes(
+export function setCachedPreviousCloseQuotes(
   quotes: PreviousCloseQuote[],
   { filePath }: { filePath?: string } = {}
 ) {
   if (quotes.length === 0) {
-    return
+    return Promise.resolve()
   }
 
-  const cache = await readQuoteCache(filePath)
-  const cachedAt = new Date().toISOString()
+  return withCacheLock(async () => {
+    const cache = await readQuoteCache(filePath)
+    const cachedAt = new Date().toISOString()
 
-  for (const quote of quotes) {
-    if (quote.error || quote.previousClose === null) {
-      continue
+    for (const quote of quotes) {
+      if (quote.error || quote.previousClose === null) {
+        continue
+      }
+
+      cache.previousCloses[quote.key] = {
+        cachedAt,
+        quote,
+      }
     }
 
-    cache.previousCloses[quote.key] = {
-      cachedAt,
-      quote,
-    }
-  }
-
-  await writeQuoteCache(cache, filePath)
+    await writeQuoteCache(cache, filePath)
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -232,17 +246,19 @@ export async function getCachedFxSnapshot(
   return null
 }
 
-export async function setCachedFxSnapshot(
+export function setCachedFxSnapshot(
   snapshot: FxRateSnapshot,
   { filePath }: { filePath?: string } = {}
 ) {
-  const cache = await readQuoteCache(filePath)
-  cache.fxSnapshots[snapshot.pair] = {
-    cachedAt: new Date().toISOString(),
-    snapshot,
-  }
+  return withCacheLock(async () => {
+    const cache = await readQuoteCache(filePath)
+    cache.fxSnapshots[snapshot.pair] = {
+      cachedAt: new Date().toISOString(),
+      snapshot,
+    }
 
-  await writeQuoteCache(cache, filePath)
+    await writeQuoteCache(cache, filePath)
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -263,16 +279,18 @@ export async function getCachedInstrumentResolution(
   return entry.instrument
 }
 
-export async function setCachedInstrumentResolution(
+export function setCachedInstrumentResolution(
   key: string,
   instrument: CachedInstrument,
   { filePath }: { filePath?: string } = {}
 ) {
-  const cache = await readQuoteCache(filePath)
-  cache.instruments[key] = {
-    cachedAt: new Date().toISOString(),
-    instrument,
-  }
+  return withCacheLock(async () => {
+    const cache = await readQuoteCache(filePath)
+    cache.instruments[key] = {
+      cachedAt: new Date().toISOString(),
+      instrument,
+    }
 
-  await writeQuoteCache(cache, filePath)
+    await writeQuoteCache(cache, filePath)
+  })
 }

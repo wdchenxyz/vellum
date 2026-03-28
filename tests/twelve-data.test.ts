@@ -64,6 +64,7 @@ describe("selectInstrumentMatch", () => {
 describe("fetchPreviousCloseSnapshots", () => {
   const originalApiKey = process.env.TWELVEDATA_API_KEY
   const originalQuoteCacheFilePath = process.env.QUOTE_CACHE_FILE_PATH
+  const originalRequestDelay = process.env.TWELVEDATA_REQUEST_DELAY_MS
   const tempDirectories: string[] = []
 
   async function createTempQuoteCacheFilePath() {
@@ -74,11 +75,13 @@ describe("fetchPreviousCloseSnapshots", () => {
 
   beforeEach(async () => {
     process.env.TWELVEDATA_API_KEY = "test-key"
+    process.env.TWELVEDATA_REQUEST_DELAY_MS = "0"
     process.env.QUOTE_CACHE_FILE_PATH = await createTempQuoteCacheFilePath()
   })
 
   afterEach(async () => {
     process.env.TWELVEDATA_API_KEY = originalApiKey
+    process.env.TWELVEDATA_REQUEST_DELAY_MS = originalRequestDelay
     process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
     await Promise.all(
       tempDirectories
@@ -410,6 +413,7 @@ describe("fetchPreviousCloseSnapshots", () => {
 describe("fetchUsdTwdFxSnapshot", () => {
   const originalApiKey = process.env.TWELVEDATA_API_KEY
   const originalQuoteCacheFilePath = process.env.QUOTE_CACHE_FILE_PATH
+  const originalRequestDelay = process.env.TWELVEDATA_REQUEST_DELAY_MS
   const tempDirectories: string[] = []
 
   async function createTempQuoteCacheFilePath() {
@@ -420,11 +424,13 @@ describe("fetchUsdTwdFxSnapshot", () => {
 
   beforeEach(async () => {
     process.env.TWELVEDATA_API_KEY = "test-key"
+    process.env.TWELVEDATA_REQUEST_DELAY_MS = "0"
     process.env.QUOTE_CACHE_FILE_PATH = await createTempQuoteCacheFilePath()
   })
 
   afterEach(async () => {
     process.env.TWELVEDATA_API_KEY = originalApiKey
+    process.env.TWELVEDATA_REQUEST_DELAY_MS = originalRequestDelay
     process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
     await Promise.all(
       tempDirectories
