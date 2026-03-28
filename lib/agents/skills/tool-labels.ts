@@ -9,4 +9,8 @@ export const allToolLabels: Record<string, string> = {
   getDailyValues: "Computing portfolio values",
   getStockPerformance: "Analyzing stock performance",
   getFxRate: "Checking exchange rate",
+  // News skill
+  fetchHotNews: "Fetching news headlines",
+  getUnifiedTrends: "Aggregating trending topics",
+  getMarketSummary: "Loading prediction markets",
 }

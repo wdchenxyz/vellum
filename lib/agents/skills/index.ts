@@ -2,10 +2,11 @@ import type { InferUITools, ToolSet } from "ai"
 
 import type { Skill } from "./types"
 import { portfolioSkill } from "./portfolio"
+import { newsSkill } from "./news"
 
 // --- Skill Registry ---
 // To add a new skill, import it and add it to this array.
-export const skills: Skill[] = [portfolioSkill]
+export const skills: Skill[] = [portfolioSkill, newsSkill]
 
 // --- Merged Tools ---
 // Union of all tools across all skills, passed to streamText().
