@@ -10,7 +10,8 @@ export const getUnifiedTrends = tool({
     "Get a unified trending topics report aggregated from multiple news sources. Returns top headlines from each source combined into one report. Use this when the user wants a broad overview of what's trending across platforms. Defaults to weibo, zhihu, and wallstreetcn if no sources specified.",
   inputSchema: z.object({
     sources: z
-      .array(z.enum(SOURCE_IDS as [string, ...string[]]))
+      .array(z.enum(SOURCE_IDS))
+      .max(5)
       .optional()
       .default(["weibo", "zhihu", "wallstreetcn"])
       .describe(

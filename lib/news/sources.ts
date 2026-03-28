@@ -26,7 +26,10 @@ export const NEWS_SOURCES: NewsSource[] = [
   { id: "hackernews", name: "Hacker News", category: "tech" },
 ]
 
-export const SOURCE_IDS = NEWS_SOURCES.map((s) => s.id)
+export const SOURCE_IDS = NEWS_SOURCES.map((s) => s.id) as [
+  string,
+  ...string[],
+]
 
 export function getSourceName(id: string): string {
   return NEWS_SOURCES.find((s) => s.id === id)?.name ?? id
