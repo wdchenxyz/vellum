@@ -10,6 +10,4 @@ export interface Skill<T extends ToolSet = ToolSet> {
   tools: T
   /** Domain-specific system prompt fragment appended when this skill is active */
   systemPrompt: string
-  /** Human-readable labels for tool call indicators in the UI */
-  toolLabels: Record<string, string>
 }

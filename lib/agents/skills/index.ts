@@ -12,6 +12,13 @@ export const skills: Skill[] = [portfolioSkill]
 function mergeTools(skillList: Skill[]): ToolSet {
   const merged: ToolSet = {}
   for (const skill of skillList) {
+    for (const key of Object.keys(skill.tools)) {
+      if (key in merged) {
+        throw new Error(
+          `Tool name collision: "${key}" is defined in multiple skills`
+        )
+      }
+    }
     Object.assign(merged, skill.tools)
   }
   return merged

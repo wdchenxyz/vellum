@@ -41,11 +41,4 @@ You have access to these tools:
 - All portfolio values from getDailyValues are denominated in TWD.
 - Be concise but thorough. Show the numbers that matter.
 </guidelines>`,
-  toolLabels: {
-    getTradeHistory: "Fetching trade history",
-    getHoldings: "Loading portfolio holdings",
-    getDailyValues: "Computing portfolio values",
-    getStockPerformance: "Analyzing stock performance",
-    getFxRate: "Checking exchange rate",
-  },
 }
