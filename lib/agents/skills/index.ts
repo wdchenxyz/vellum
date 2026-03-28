@@ -21,16 +21,9 @@ export const allTools = mergeTools(skills)
 export type AllToolsParts = InferUITools<typeof allTools>
 
 // --- Merged Tool Labels ---
-// Union of all toolLabels across all skills, used by the UI.
-function mergeToolLabels(skillList: Skill[]): Record<string, string> {
-  const merged: Record<string, string> = {}
-  for (const skill of skillList) {
-    Object.assign(merged, skill.toolLabels)
-  }
-  return merged
-}
-
-export const allToolLabels = mergeToolLabels(skills)
+// Re-exported from tool-labels.ts (client-safe, no server-only imports).
+// Client components should import from "@/lib/agents/skills/tool-labels" directly.
+export { allToolLabels } from "./tool-labels"
 
 // --- Base System Prompt ---
 // Product knowledge and behavioral rules shared across all skills.

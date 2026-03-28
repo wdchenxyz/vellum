@@ -18,7 +18,7 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input"
 import { Button } from "@/components/ui/button"
-import { allToolLabels } from "@/lib/agents/skills"
+import { allToolLabels } from "@/lib/agents/skills/tool-labels"
 import { cn } from "@/lib/utils"
 import { useChat } from "@ai-sdk/react"
 import { Loader2, MessageCircle, X } from "lucide-react"
