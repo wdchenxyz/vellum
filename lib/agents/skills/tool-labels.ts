@@ -13,4 +13,5 @@ export const allToolLabels: Record<string, string> = {
   fetchHotNews: "Fetching news headlines",
   getUnifiedTrends: "Aggregating trending topics",
   getMarketSummary: "Loading prediction markets",
+  fetchNewsContent: "Reading article content",
 }
