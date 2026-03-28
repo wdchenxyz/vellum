@@ -18,6 +18,7 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input"
 import { Button } from "@/components/ui/button"
+import { allToolLabels } from "@/lib/agents/skills"
 import { cn } from "@/lib/utils"
 import { useChat } from "@ai-sdk/react"
 import { Loader2, MessageCircle, X } from "lucide-react"
@@ -63,18 +64,10 @@ export function ChatTrigger() {
 }
 
 function ToolCallIndicator({ toolName }: { toolName: string }) {
-  const labels: Record<string, string> = {
-    getTradeHistory: "Fetching trade history",
-    getHoldings: "Loading portfolio holdings",
-    getDailyValues: "Computing portfolio values",
-    getStockPerformance: "Analyzing stock performance",
-    getFxRate: "Checking exchange rate",
-  }
-
   return (
     <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
       <Loader2 className="size-3 animate-spin" />
-      <span>{labels[toolName] ?? `Running ${toolName}`}</span>
+      <span>{allToolLabels[toolName] ?? `Running ${toolName}`}</span>
     </div>
   )
 }
