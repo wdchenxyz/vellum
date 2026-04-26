@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 import { useTheme } from "next-themes"
 import { Monitor, Moon, Paintbrush, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -99,6 +99,31 @@ const PALETTES = [
 ] as const
 
 type PaletteValue = (typeof PALETTES)[number]["value"]
+const DEFAULT_PALETTE: PaletteValue = "ink"
+const PALETTE_CHANGE_EVENT = "vellum:palette-change"
+
+function isPaletteValue(value: string | null): value is PaletteValue {
+  return PALETTES.some((palette) => palette.value === value)
+}
+
+function getStoredPalette(): PaletteValue {
+  if (typeof window === "undefined") {
+    return DEFAULT_PALETTE
+  }
+
+  const stored = localStorage.getItem("palette")
+  return isPaletteValue(stored) ? stored : DEFAULT_PALETTE
+}
+
+function subscribeToPalette(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange)
+  window.addEventListener(PALETTE_CHANGE_EVENT, onStoreChange)
+
+  return () => {
+    window.removeEventListener("storage", onStoreChange)
+    window.removeEventListener(PALETTE_CHANGE_EVENT, onStoreChange)
+  }
+}
 
 function Swatch({ colors }: { colors: readonly [string, string, string] }) {
   return (
@@ -121,21 +146,30 @@ function applyPalette(value: PaletteValue) {
 }
 
 function PaletteToggle() {
-  const [palette, setPalette] = useState<PaletteValue>("ink")
+  const palette = useSyncExternalStore(
+    subscribeToPalette,
+    getStoredPalette,
+    () => DEFAULT_PALETTE
+  )
   const [mounted, setMounted] = useState(false)
   const { resolvedTheme, theme, setTheme } = useTheme()
 
   useEffect(() => {
-    setMounted(true)
-    const stored = (localStorage.getItem("palette") || "ink") as PaletteValue
-    setPalette(stored)
-    applyPalette(stored)
+    const frame = requestAnimationFrame(() => setMounted(true))
+    return () => cancelAnimationFrame(frame)
   }, [])
 
+  useEffect(() => {
+    applyPalette(palette)
+  }, [palette])
+
   function selectPalette(value: string) {
-    const v = value as PaletteValue
-    setPalette(v)
-    applyPalette(v)
+    if (!isPaletteValue(value)) {
+      return
+    }
+
+    applyPalette(value)
+    window.dispatchEvent(new Event(PALETTE_CHANGE_EVENT))
   }
 
   if (!mounted) return null

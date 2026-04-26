@@ -19,23 +19,7 @@ import {
   PromptInputTools,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input"
-import { AssetValueChart } from "@/components/asset-value-chart"
-import { HoldingsTable } from "@/components/holdings-table"
-import { PortfolioSummaryCards } from "@/components/portfolio-summary-cards"
 import { TradesTable } from "@/components/trades-table"
-import {
-  aggregateHoldings,
-  applyPreviousCloseQuotes,
-} from "@/lib/portfolio/holdings"
-import {
-  type BenchmarkSeries,
-  dailyValuesResponseSchema,
-  type DailyValuePoint,
-  fxRateResponseSchema,
-  type FxRateSnapshot,
-  previousCloseResponseSchema,
-  type PreviousCloseQuote,
-} from "@/lib/portfolio/schema"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -54,7 +38,7 @@ import {
 } from "@/lib/trades/schema"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ChevronDown, Paperclip, TriangleAlert } from "lucide-react"
-import { useCallback, useEffect, useId, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 function pluralize(value: number, singular: string, plural = `${singular}s`) {
   return value === 1 ? singular : plural
@@ -110,7 +94,7 @@ function AttachmentTray() {
         <p className="text-sm font-medium text-primary">
           {fileCount === 0
             ? "Drop screenshots or PDFs here."
-            : `Ready to extract ${fileCount} ${pluralize(fileCount, "file")}.`}
+            : `Ready to add ${fileCount} ${pluralize(fileCount, "file")}.`}
         </p>
         <BrowseFilesButton />
       </div>
@@ -135,8 +119,6 @@ function AttachmentTray() {
 }
 
 function OptionalNote() {
-  const textareaId = useId()
-
   return (
     <details className="group px-4 pb-2">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1.5 text-xs text-muted-foreground hover:text-foreground">
@@ -145,8 +127,7 @@ function OptionalNote() {
       </summary>
       <PromptInputTextarea
         className="mt-1 min-h-16 text-sm"
-        id={textareaId}
-        placeholder="Example: ignore account summary totals and extract only filled trades."
+        placeholder="Example: ignore account summary totals and use only filled transactions."
       />
     </details>
   )
@@ -207,32 +188,8 @@ export function TradeExtractor() {
   const [issues, setIssues] = useState<string[]>([])
   const [restoreIssue, setRestoreIssue] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
-  const [quotesByKey, setQuotesByKey] = useState<
-    Record<string, PreviousCloseQuote>
-  >({})
-  const [quoteStatus, setQuoteStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle")
-  const [quoteRequestIssue, setQuoteRequestIssue] = useState<string | null>(
-    null
-  )
-  const [fxSnapshot, setFxSnapshot] = useState<FxRateSnapshot | null>(null)
-  const [fxStatus, setFxStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle")
-  const [fxIssue, setFxIssue] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
-  const [dailySeries, setDailySeries] = useState<DailyValuePoint[]>([])
-  const [dailyCostBasis, setDailyCostBasis] = useState<number | null>(null)
-  const [dailyBenchmarks, setDailyBenchmarks] = useState<BenchmarkSeries>({
-    spx: [],
-    twii: [],
-  })
-  const [dailyStatus, setDailyStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle")
-  const [dailyIssue, setDailyIssue] = useState<string | null>(null)
 
   const accountOptions = useMemo(
     () =>
@@ -244,26 +201,6 @@ export function TradeExtractor() {
         ),
       ].sort((a, b) => a.localeCompare(b)),
     [rows]
-  )
-
-  const aggregatedPortfolio = useMemo(() => aggregateHoldings(rows), [rows])
-  const valuedPortfolio = useMemo(
-    () => applyPreviousCloseQuotes(aggregatedPortfolio.holdings, quotesByKey),
-    [aggregatedPortfolio.holdings, quotesByKey]
-  )
-  const hasUsdBucket = valuedPortfolio.groups.some((group) =>
-    group.currencies.includes("USD")
-  )
-  const needsUsdTwdFxSnapshot = hasUsdBucket
-  const missingQuoteTargets = useMemo(
-    () =>
-      aggregatedPortfolio.holdings
-        .filter((holding) => !quotesByKey[holding.quoteKey])
-        .map((holding) => ({
-          market: holding.market,
-          ticker: holding.ticker,
-        })),
-    [aggregatedPortfolio.holdings, quotesByKey]
   )
 
   useEffect(() => {
@@ -309,199 +246,6 @@ export function TradeExtractor() {
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    if (!needsUsdTwdFxSnapshot) {
-      setFxStatus("idle")
-      setFxIssue(null)
-      return
-    }
-
-    if (fxSnapshot) {
-      setFxStatus("ready")
-      return
-    }
-
-    let cancelled = false
-
-    async function loadFxSnapshot() {
-      setFxStatus("loading")
-      setFxIssue(null)
-
-      try {
-        const response = await fetch("/api/quotes/fx-rate", {
-          cache: "no-store",
-        })
-
-        if (!response.ok) {
-          throw new Error(await readErrorMessage(response))
-        }
-
-        const payload = await response.json()
-        const parsed = fxRateResponseSchema.safeParse(payload)
-
-        if (!parsed.success) {
-          throw new Error("The server returned an unexpected FX response.")
-        }
-
-        if (cancelled) {
-          return
-        }
-
-        setFxSnapshot(parsed.data.snapshot)
-        setFxStatus("ready")
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setFxStatus("error")
-        setFxIssue(getErrorMessage(error))
-      }
-    }
-
-    void loadFxSnapshot()
-
-    return () => {
-      cancelled = true
-    }
-  }, [fxSnapshot, needsUsdTwdFxSnapshot])
-
-  useEffect(() => {
-    if (aggregatedPortfolio.holdings.length === 0) {
-      setQuoteStatus("idle")
-      setQuoteRequestIssue(null)
-      return
-    }
-
-    if (missingQuoteTargets.length === 0) {
-      setQuoteStatus("ready")
-      return
-    }
-
-    let cancelled = false
-
-    async function loadPreviousCloses() {
-      setQuoteStatus("loading")
-      setQuoteRequestIssue(null)
-
-      try {
-        const response = await fetch("/api/quotes/previous-close", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ targets: missingQuoteTargets }),
-        })
-
-        if (!response.ok) {
-          throw new Error(await readErrorMessage(response))
-        }
-
-        const payload = await response.json()
-        const parsed = previousCloseResponseSchema.safeParse(payload)
-
-        if (!parsed.success) {
-          throw new Error("The server returned an unexpected price response.")
-        }
-
-        if (cancelled) {
-          return
-        }
-
-        setQuotesByKey((currentQuotes) => {
-          const nextQuotes = { ...currentQuotes }
-
-          for (const quote of parsed.data.quotes) {
-            nextQuotes[quote.key] = quote
-          }
-
-          return nextQuotes
-        })
-        setQuoteStatus("ready")
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setQuoteStatus("error")
-        setQuoteRequestIssue(getErrorMessage(error))
-      }
-    }
-
-    void loadPreviousCloses()
-
-    return () => {
-      cancelled = true
-    }
-  }, [aggregatedPortfolio.holdings.length, missingQuoteTargets])
-
-  useEffect(() => {
-    if (rows.length === 0) {
-      setDailyStatus("idle")
-      setDailyIssue(null)
-      setDailyBenchmarks({ spx: [], twii: [] })
-      setDailyCostBasis(null)
-      setDailySeries([])
-      return
-    }
-
-    let cancelled = false
-
-    async function loadDailyValues() {
-      setDailyStatus("loading")
-      setDailyIssue(null)
-      setDailyBenchmarks({ spx: [], twii: [] })
-      setDailyCostBasis(null)
-      setDailySeries([])
-
-      try {
-        const response = await fetch("/api/portfolio/daily-values", {
-          cache: "no-store",
-        })
-
-        if (!response.ok) {
-          throw new Error(await readErrorMessage(response))
-        }
-
-        const payload = await response.json()
-        const parsed = dailyValuesResponseSchema.safeParse(payload)
-
-        if (!parsed.success) {
-          throw new Error(
-            "The server returned an unexpected daily values response."
-          )
-        }
-
-        if (cancelled) {
-          return
-        }
-
-        setDailySeries(parsed.data.series)
-        setDailyCostBasis(parsed.data.costBasisTwd)
-        setDailyBenchmarks(parsed.data.benchmarks)
-        setDailyIssue(
-          parsed.data.issues.length > 0
-            ? `Missing history for: ${parsed.data.issues.join("; ")}`
-            : null
-        )
-        setDailyStatus("ready")
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setDailyStatus("error")
-        setDailyIssue(getErrorMessage(error))
-      }
-    }
-
-    void loadDailyValues()
-
-    return () => {
-      cancelled = true
-    }
-  }, [rows])
 
   const handleDeleteTrade = useCallback(async (id: string) => {
     setDeleteIssue(null)
@@ -588,7 +332,7 @@ export function TradeExtractor() {
       setRows((currentRows) => mergeTradeRows(currentRows, nextRows))
       setIssues(nextIssues)
       setSuccessMessage(
-        `Added ${nextRows.length} ${pluralize(nextRows.length, "trade")} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`
+        `Added ${nextRows.length} confirmation ${pluralize(nextRows.length, "record")} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`
       )
     } catch (error) {
       setSuccessMessage(null)
@@ -602,23 +346,6 @@ export function TradeExtractor() {
 
   return (
     <div className="grid gap-8">
-      {rows.length > 0 ? (
-        <PortfolioSummaryCards
-          fxSnapshot={fxSnapshot}
-          holdings={valuedPortfolio.holdings}
-        />
-      ) : null}
-
-      {rows.length > 0 ? (
-        <AssetValueChart
-          benchmarks={dailyBenchmarks}
-          costBasisTwd={dailyCostBasis}
-          error={dailyIssue}
-          series={dailySeries}
-          status={dailyStatus}
-        />
-      ) : null}
-
       <section className="space-y-4">
         <div className="space-y-1">
           <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
@@ -705,23 +432,11 @@ export function TradeExtractor() {
               size="sm"
               status={status}
             >
-              {status === "ready" ? "Extract trades" : "Extracting..."}
+              {status === "ready" ? "Add confirmations" : "Adding..."}
             </PromptInputSubmit>
           </PromptInputFooter>
         </PromptInput>
       </section>
-
-      {rows.length > 0 ? (
-        <HoldingsTable
-          fxIssue={fxIssue}
-          fxSnapshot={fxSnapshot}
-          fxStatus={fxStatus}
-          groups={valuedPortfolio.groups}
-          holdings={valuedPortfolio.holdings}
-          issues={aggregatedPortfolio.issues}
-          requestError={quoteRequestIssue}
-        />
-      ) : null}
 
       <TradesTable
         issues={successMessage ? issues : []}

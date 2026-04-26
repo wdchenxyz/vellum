@@ -32,8 +32,6 @@ import {
   type ReactNode,
 } from "react"
 
-const SIDEBAR_WIDTH = "w-[480px]"
-
 const ChatDrawerContext = createContext<{
   open: boolean
   setOpen: (open: boolean) => void
@@ -49,7 +47,8 @@ const ChatStateContext = createContext<ReturnType<typeof useChat> | null>(null)
 
 function useChatState() {
   const ctx = useContext(ChatStateContext)
-  if (!ctx) throw new Error("useChatState must be used within ChatStateProvider")
+  if (!ctx)
+    throw new Error("useChatState must be used within ChatStateProvider")
   return ctx
 }
 
@@ -261,9 +260,7 @@ function ChatPanel() {
       <div
         className={cn(
           "fixed top-0 right-0 z-50 flex h-full flex-col border-l bg-background transition-all duration-300 ease-in-out",
-          expanded
-            ? "w-full border-l-0 shadow-2xl"
-            : "w-[480px]"
+          expanded ? "w-full border-l-0 shadow-2xl" : "w-[480px]"
         )}
       >
         <ChatPanelHeader />
@@ -297,14 +294,14 @@ export function ChatLayout({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <ChatDrawerContext.Provider value={{ open, setOpen, expanded, setExpanded }}>
+    <ChatDrawerContext.Provider
+      value={{ open, setOpen, expanded, setExpanded }}
+    >
       <ChatStateProvider>
         <div className="flex h-svh overflow-hidden">
           <div className="flex-1 overflow-y-auto">{children}</div>
           {/* Spacer to push content when sidebar is open */}
-          {open && !expanded && (
-            <div className="w-[480px] shrink-0" />
-          )}
+          {open && !expanded && <div className="w-[480px] shrink-0" />}
         </div>
         {open && <ChatPanel />}
       </ChatStateProvider>
