@@ -23,6 +23,14 @@ import { TradesTable } from "@/components/trades-table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
+import {
   MAX_BATCH_SIZE_LABEL,
   MAX_FILE_SIZE_BYTES,
   MAX_FILE_SIZE_LABEL,
@@ -37,8 +45,21 @@ import {
   type TradeTableRow,
 } from "@/lib/trades/schema"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { ChevronDown, Paperclip, TriangleAlert } from "lucide-react"
+import {
+  Building2,
+  ChevronDown,
+  Paperclip,
+  Plus,
+  TriangleAlert,
+} from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
+
+const DEFAULT_ACCOUNT_OPTIONS = [
+  "Firstrade",
+  "元大台股",
+  "元大複委託",
+  "群益複委託",
+]
 
 function pluralize(value: number, singular: string, plural = `${singular}s`) {
   return value === 1 ? singular : plural
@@ -184,6 +205,7 @@ function mergeTradeRows(
 export function TradeExtractor() {
   const [rows, setRows] = useState<TradeTableRow[]>([])
   const [status, setStatus] = useState<ChatStatus>("ready")
+  const [ingestOpen, setIngestOpen] = useState(false)
   const [uploadIssue, setUploadIssue] = useState<string | null>(null)
   const [issues, setIssues] = useState<string[]>([])
   const [restoreIssue, setRestoreIssue] = useState<string | null>(null)
@@ -191,17 +213,18 @@ export function TradeExtractor() {
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
 
-  const accountOptions = useMemo(
-    () =>
-      [
-        ...new Set(
-          rows
-            .map((row) => row.account)
-            .filter((account): account is string => account !== null)
-        ),
-      ].sort((a, b) => a.localeCompare(b)),
-    [rows]
-  )
+  const accountOptions = useMemo(() => {
+    const rowAccounts = rows
+      .map((row) => row.account)
+      .filter((account): account is string => account !== null)
+
+    return [
+      ...DEFAULT_ACCOUNT_OPTIONS,
+      ...rowAccounts.filter(
+        (account) => !DEFAULT_ACCOUNT_OPTIONS.includes(account)
+      ),
+    ]
+  }, [rows])
 
   useEffect(() => {
     let cancelled = false
@@ -275,6 +298,13 @@ export function TradeExtractor() {
   }, [])
 
   async function handleSubmit(message: PromptInputMessage) {
+    if (!selectedAccount) {
+      const issue = "Select the account these confirmations belong to."
+      setUploadIssue(issue)
+      setSuccessMessage(null)
+      throw new Error(issue)
+    }
+
     if (message.files.length === 0) {
       const issue = "Add at least one image or PDF before submitting."
       setUploadIssue(issue)
@@ -334,6 +364,7 @@ export function TradeExtractor() {
       setSuccessMessage(
         `Added ${nextRows.length} confirmation ${pluralize(nextRows.length, "record")} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`
       )
+      setIngestOpen(false)
     } catch (error) {
       setSuccessMessage(null)
       setUploadIssue(getErrorMessage(error))
@@ -346,96 +377,136 @@ export function TradeExtractor() {
 
   return (
     <div className="grid gap-8">
-      <section className="space-y-4">
-        <div className="space-y-1">
-          <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
-            Ingest
-          </p>
-          <h2 className="text-lg font-medium tracking-tight">
-            Add confirmations
-          </h2>
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/80 px-4 py-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
+              Ingest
+            </p>
+            <span className="text-xs text-muted-foreground">
+              Upload screenshots or PDFs from the correct account.
+            </span>
+          </div>
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <Building2 className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate text-muted-foreground">
+              {selectedAccount
+                ? `${selectedAccount} selected`
+                : "Choose an account in the drawer"}
+            </span>
+          </div>
         </div>
 
-        {accountOptions.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              Account
-            </span>
-            <ToggleGroup
-              onValueChange={(value) => setSelectedAccount(value || null)}
-              size="sm"
-              type="single"
-              value={selectedAccount ?? ""}
-              variant="outline"
-            >
-              {accountOptions.map((account) => (
-                <ToggleGroupItem key={account} value={account}>
-                  {account}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-        ) : null}
-
-        {uploadIssue ? (
-          <Alert
-            className="border-destructive/30 bg-destructive/5"
-            variant="destructive"
+        <Sheet onOpenChange={setIngestOpen} open={ingestOpen}>
+          <SheetTrigger asChild>
+            <Button>
+              <Plus data-icon="inline-start" />
+              Add confirmations
+            </Button>
+          </SheetTrigger>
+          <SheetContent
+            className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+            side="right"
           >
-            <TriangleAlert className="size-4" />
-            <AlertTitle>
-              {issues.length > 0 ? "Review these files" : "Upload blocked"}
-            </AlertTitle>
-            <AlertDescription>
-              {issues.length > 0 ? (
-                <div className="flex flex-col gap-1">
-                  {issues.map((issue) => (
-                    <p key={issue}>{issue}</p>
-                  ))}
-                </div>
-              ) : (
-                uploadIssue
-              )}
-            </AlertDescription>
-          </Alert>
-        ) : null}
+            <SheetHeader className="border-b">
+              <SheetTitle>Add confirmations</SheetTitle>
+              <SheetDescription>
+                Select the account, upload screenshots or PDFs, then add the
+                extracted records to history.
+              </SheetDescription>
+            </SheetHeader>
 
-        <PromptInput
-          accept={UPLOAD_ACCEPT}
-          inputGroupClassName="surface-upload rounded-xl border-primary/20"
-          maxFiles={MAX_FILES}
-          maxFileSize={MAX_FILE_SIZE_BYTES}
-          multiple
-          onError={(error) => {
-            setUploadIssue(formatPromptInputError(error.code))
-            setIssues([])
-            setSuccessMessage(null)
-          }}
-          onSubmit={handleSubmit}
-        >
-          <PromptInputHeader className="px-4 py-4">
-            <AttachmentTray />
-          </PromptInputHeader>
-          <PromptInputBody>
-            <OptionalNote />
-          </PromptInputBody>
-          <PromptInputFooter className="border-t px-4 py-3">
-            <PromptInputTools>
-              <span className="text-xs text-muted-foreground">
-                {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
-                {MAX_BATCH_SIZE_LABEL} total
-              </span>
-            </PromptInputTools>
-            <PromptInputSubmit
-              className="shadow-primary-soft"
-              disabled={status !== "ready"}
-              size="sm"
-              status={status}
-            >
-              {status === "ready" ? "Add confirmations" : "Adding..."}
-            </PromptInputSubmit>
-          </PromptInputFooter>
-        </PromptInput>
+            <div className="flex flex-col gap-5 px-4 pb-4">
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Account
+                </span>
+                <ToggleGroup
+                  className="flex flex-wrap justify-start"
+                  onValueChange={(value) => setSelectedAccount(value || null)}
+                  size="sm"
+                  type="single"
+                  value={selectedAccount ?? ""}
+                  variant="outline"
+                >
+                  {accountOptions.map((account) => (
+                    <ToggleGroupItem key={account} value={account}>
+                      {account}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
+
+              {uploadIssue ? (
+                <Alert
+                  className="border-destructive/30 bg-destructive/5"
+                  variant="destructive"
+                >
+                  <TriangleAlert className="size-4" />
+                  <AlertTitle>
+                    {issues.length > 0
+                      ? "Review these files"
+                      : "Upload blocked"}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {issues.length > 0 ? (
+                      <div className="flex flex-col gap-1">
+                        {issues.map((issue) => (
+                          <p key={issue}>{issue}</p>
+                        ))}
+                      </div>
+                    ) : (
+                      uploadIssue
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              <PromptInput
+                accept={UPLOAD_ACCEPT}
+                inputGroupClassName="surface-upload rounded-xl border-primary/20"
+                maxFiles={MAX_FILES}
+                maxFileSize={MAX_FILE_SIZE_BYTES}
+                multiple
+                onError={(error) => {
+                  setUploadIssue(formatPromptInputError(error.code))
+                  setIssues([])
+                  setSuccessMessage(null)
+                }}
+                onSubmit={handleSubmit}
+              >
+                <PromptInputHeader className="px-4 py-4">
+                  <AttachmentTray />
+                </PromptInputHeader>
+                <PromptInputBody>
+                  <OptionalNote />
+                </PromptInputBody>
+                <PromptInputFooter className="border-t px-4 py-3">
+                  <PromptInputTools>
+                    <span className="text-xs text-muted-foreground">
+                      {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
+                      {MAX_BATCH_SIZE_LABEL} total
+                    </span>
+                  </PromptInputTools>
+                  <PromptInputSubmit
+                    className="shadow-primary-soft"
+                    disabled={status !== "ready" || !selectedAccount}
+                    size="sm"
+                    status={status}
+                  >
+                    {status === "ready" ? "Add" : "Adding..."}
+                  </PromptInputSubmit>
+                </PromptInputFooter>
+              </PromptInput>
+
+              {!selectedAccount ? (
+                <p className="text-xs text-muted-foreground">
+                  Select an account to enable adding confirmations.
+                </p>
+              ) : null}
+            </div>
+          </SheetContent>
+        </Sheet>
       </section>
 
       <TradesTable
