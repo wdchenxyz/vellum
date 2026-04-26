@@ -21,49 +21,35 @@ import type { TradeTableRow } from "@/lib/trades/schema"
 
 export type DailyValuesResult = {
   benchmarks: BenchmarkSeries
-  costBasisTwd: number
+  costBasisTwd: number | null
   issues: string[]
   series: DailyValuePoint[]
 }
 
-/**
- * Compute daily portfolio values, benchmarks, and cost basis from trades.
- * Shared between the `/api/portfolio/daily-values` route and chat tools.
- */
-export async function computeDailyValuesFromTrades(
-  trades: TradeTableRow[]
-): Promise<DailyValuesResult> {
-  if (trades.length === 0) {
-    return {
-      benchmarks: { spx: [], twii: [] },
-      costBasisTwd: 0,
-      issues: [],
-      series: [],
-    }
-  }
+type HistoryTarget = {
+  key: string
+  ticker: string
+  market: "US" | "TW"
+}
 
-  const { holdings } = aggregateHoldings(trades)
+type HistoricalMarketData = {
+  fxRates: DailyPriceSeries
+  fxSnapshot: Awaited<ReturnType<typeof fetchUsdTwdFxSnapshot>> | null
+  issues: string[]
+  priceSeries: Map<string, DailyPriceSeries>
+}
 
-  if (holdings.length === 0) {
-    return {
-      benchmarks: { spx: [], twii: [] },
-      costBasisTwd: 0,
-      issues: [],
-      series: [],
-    }
-  }
+const EMPTY_RESULT: DailyValuesResult = {
+  benchmarks: { spx: [], twii: [] },
+  costBasisTwd: 0,
+  issues: [],
+  series: [],
+}
 
-  // Determine earliest trade date for the fetch window.
-  const sortedDates = trades
-    .map((trade) => trade.date)
-    .sort((a, b) => a.localeCompare(b))
-  const startDate = sortedDates[0]
-
-  // Deduplicate by quoteKey — one price series per unique ticker+market.
-  const uniqueTargets = new Map<
-    string,
-    { key: string; ticker: string; market: "US" | "TW" }
-  >()
+function collectUniqueHistoryTargets(
+  holdings: ReturnType<typeof aggregateHoldings>["holdings"]
+): Map<string, HistoryTarget> {
+  const uniqueTargets = new Map<string, HistoryTarget>()
 
   for (const holding of holdings) {
     if (!uniqueTargets.has(holding.quoteKey)) {
@@ -75,23 +61,34 @@ export async function computeDailyValuesFromTrades(
     }
   }
 
-  const hasUsd = holdings.some((holding) => holding.currency === "USD")
+  return uniqueTargets
+}
 
-  // Fetch historical prices + FX in parallel.
-  const fetchIssues: string[] = []
+function getTradeStartDate(trades: TradeTableRow[]) {
+  return trades
+    .map((trade) => trade.date)
+    .sort((left, right) => left.localeCompare(right))[0]
+}
+
+async function fetchHistoricalMarketData(
+  targets: Iterable<HistoryTarget>,
+  startDate: string,
+  hasUsd: boolean
+): Promise<HistoricalMarketData> {
+  const issues: string[] = []
 
   const [fxRates, fxSnapshot, ...tickerResults] = await Promise.all([
     hasUsd
       ? fetchFxHistory(startDate)
       : Promise.resolve({} as DailyPriceSeries),
     hasUsd ? fetchUsdTwdFxSnapshot() : Promise.resolve(null),
-    ...[...uniqueTargets.values()].map(async (target) => {
+    ...[...targets].map(async (target) => {
       try {
         const prices = await fetchTickerHistory(target, startDate)
         return { key: target.key, prices }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error"
-        fetchIssues.push(`${target.key}: ${message}`)
+        issues.push(`${target.key}: ${message}`)
         return { key: target.key, prices: {} as DailyPriceSeries }
       }
     }),
@@ -105,8 +102,19 @@ export async function computeDailyValuesFromTrades(
     }
   }
 
-  // Also build quoteKey mappings from the raw trades (to handle Chinese
-  // ticker names that get normalised during aggregation).
+  return {
+    fxRates,
+    fxSnapshot,
+    issues,
+    priceSeries,
+  }
+}
+
+function addRawTradePriceAliases(
+  trades: TradeTableRow[],
+  holdings: ReturnType<typeof aggregateHoldings>["holdings"],
+  priceSeries: Map<string, DailyPriceSeries>
+) {
   for (const trade of trades) {
     const market = inferSupportedMarket({
       ticker: trade.ticker,
@@ -119,34 +127,36 @@ export async function computeDailyValuesFromTrades(
 
     const rawKey = getQuoteLookupKey({ ticker: trade.ticker, market })
 
-    if (!priceSeries.has(rawKey)) {
-      for (const holding of holdings) {
-        if (
-          holding.market === market &&
-          holding.ticker.toUpperCase() === trade.ticker.trim().toUpperCase()
-        ) {
-          const series = priceSeries.get(holding.quoteKey)
+    if (priceSeries.has(rawKey)) {
+      continue
+    }
 
-          if (series) {
-            priceSeries.set(rawKey, series)
-          }
+    const matchingHolding = holdings.find(
+      (holding) =>
+        holding.market === market &&
+        holding.ticker.toUpperCase() === trade.ticker.trim().toUpperCase()
+    )
 
-          break
-        }
-      }
+    const series = matchingHolding
+      ? priceSeries.get(matchingHolding.quoteKey)
+      : undefined
+
+    if (series) {
+      priceSeries.set(rawKey, series)
     }
   }
+}
 
-  const series = computeDailyValues(trades, priceSeries, fxRates)
-
-  // Compute cash-flow-adjusted benchmark value series.
-  const tradingDates = series.map((point) => point.date)
-  let benchmarks: BenchmarkSeries = { spx: [], twii: [] }
-
+async function computeBenchmarks(
+  trades: TradeTableRow[],
+  startDate: string,
+  fxRates: DailyPriceSeries,
+  tradingDates: string[]
+): Promise<BenchmarkSeries> {
   try {
     const rawBenchmarks = await fetchBenchmarkHistory(startDate)
 
-    benchmarks = {
+    return {
       spx: computeBenchmarkSeries(
         trades,
         rawBenchmarks.spx,
@@ -164,21 +174,69 @@ export async function computeDailyValuesFromTrades(
     }
   } catch {
     // Non-critical — chart still works without benchmarks.
+    return EMPTY_RESULT.benchmarks
+  }
+}
+
+function computeCostBasisTwd(
+  holdings: ReturnType<typeof aggregateHoldings>["holdings"],
+  spotFxRate: number | null
+) {
+  const hasUsdHoldings = holdings.some((holding) => holding.currency === "USD")
+
+  if (hasUsdHoldings && spotFxRate === null) {
+    return null
   }
 
-  // Compute cost basis in TWD.
-  const spotFxRate = fxSnapshot?.rate ?? 0
-  let costBasisTwd = 0
+  let total = 0
 
   for (const holding of holdings) {
-    const rate = holding.currency === "USD" ? spotFxRate : 1
-    costBasisTwd += holding.totalCostOpen * rate
+    const rate = holding.currency === "USD" ? (spotFxRate ?? 0) : 1
+    total += holding.totalCostOpen * rate
   }
+
+  return Math.round(total)
+}
+
+/**
+ * Compute daily portfolio values, benchmarks, and cost basis from trades.
+ * Shared between the `/api/portfolio/daily-values` route and chat tools.
+ */
+export async function computeDailyValuesFromTrades(
+  trades: TradeTableRow[]
+): Promise<DailyValuesResult> {
+  if (trades.length === 0) {
+    return EMPTY_RESULT
+  }
+
+  const { holdings } = aggregateHoldings(trades)
+
+  if (holdings.length === 0) {
+    return EMPTY_RESULT
+  }
+
+  const startDate = getTradeStartDate(trades)
+  const uniqueTargets = collectUniqueHistoryTargets(holdings)
+  const hasUsd = holdings.some((holding) => holding.currency === "USD")
+  const { fxRates, fxSnapshot, issues, priceSeries } =
+    await fetchHistoricalMarketData(uniqueTargets.values(), startDate, hasUsd)
+
+  addRawTradePriceAliases(trades, holdings, priceSeries)
+
+  const series = computeDailyValues(trades, priceSeries, fxRates)
+  const tradingDates = series.map((point) => point.date)
+  const benchmarks = await computeBenchmarks(
+    trades,
+    startDate,
+    fxRates,
+    tradingDates
+  )
+  const costBasisTwd = computeCostBasisTwd(holdings, fxSnapshot?.rate ?? null)
 
   return {
     benchmarks,
-    costBasisTwd: Math.round(costBasisTwd),
-    issues: fetchIssues,
+    costBasisTwd,
+    issues,
     series,
   }
 }

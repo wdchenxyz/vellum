@@ -17,6 +17,23 @@ type PositionEntry = {
   quoteKey: string
 }
 
+type PositionValuation = {
+  hasCompleteValue: boolean
+  totalTwd: number
+}
+
+type TradeEventProgress = {
+  nextTradeDateIndex: number
+  positions: Map<string, PositionEntry>
+}
+
+type SortedTradeEntry = ReturnType<typeof stableSortTrades>[number]
+
+type BenchmarkProgress = {
+  benchmarkUnits: number
+  tradeIndex: number
+}
+
 /**
  * Build a sorted list of every calendar date from `startDate` to `endDate`
  * (inclusive) that appears in at least one of the provided price series.
@@ -151,6 +168,129 @@ function getLastKnownPrice(
   return best ? series[best] : null
 }
 
+function getTradeAmountInTwd(
+  trade: TradeTableRow,
+  fxRates: DailyPriceSeries,
+  date: string
+): number {
+  const currency = trade.currency?.trim().toUpperCase() ?? null
+
+  if (currency === "USD") {
+    const rate = getLastKnownPrice(fxRates, date)
+    return trade.totalAmount * (rate ?? 0)
+  }
+
+  return trade.totalAmount
+}
+
+function advanceTradeEvents(
+  tradeDates: string[],
+  tradeDateIndex: number,
+  tradeEvents: Map<string, Map<string, PositionEntry>>,
+  currentPositions: Map<string, PositionEntry>,
+  date: string
+): TradeEventProgress {
+  let nextTradeDateIndex = tradeDateIndex
+  let positions = currentPositions
+
+  while (nextTradeDateIndex < tradeDates.length) {
+    const tradeDate = tradeDates[nextTradeDateIndex]
+
+    if (tradeDate > date) {
+      break
+    }
+
+    const snapshot = tradeEvents.get(tradeDate)
+
+    if (snapshot) {
+      positions = snapshot
+    }
+
+    nextTradeDateIndex++
+  }
+
+  return {
+    nextTradeDateIndex,
+    positions,
+  }
+}
+
+function valuePositionInTwd(
+  position: PositionEntry,
+  date: string,
+  priceSeries: Map<string, DailyPriceSeries>,
+  fxRate: number | null
+): number | null {
+  if (position.quantity <= 0) {
+    return null
+  }
+
+  const price = getLastKnownPrice(priceSeries.get(position.quoteKey), date)
+
+  if (price === null) {
+    return null
+  }
+
+  const nativeValue = position.quantity * price
+
+  if (position.currency === "USD") {
+    return fxRate !== null ? nativeValue * fxRate : null
+  }
+
+  return nativeValue
+}
+
+function computePortfolioValueForDate(
+  positions: Map<string, PositionEntry>,
+  date: string,
+  priceSeries: Map<string, DailyPriceSeries>,
+  fxRates: DailyPriceSeries
+): PositionValuation {
+  const fxRate = getLastKnownPrice(fxRates, date)
+  let totalTwd = 0
+  let hasOpenPosition = false
+
+  for (const position of positions.values()) {
+    if (position.quantity <= 0) {
+      continue
+    }
+
+    hasOpenPosition = true
+
+    const value = valuePositionInTwd(position, date, priceSeries, fxRate)
+
+    if (value === null) {
+      return { hasCompleteValue: false, totalTwd: 0 }
+    }
+
+    totalTwd += value
+  }
+
+  return { hasCompleteValue: hasOpenPosition, totalTwd }
+}
+
+function addInitialCostPointIfNeeded(
+  series: DailyValuePoint[],
+  trades: TradeTableRow[],
+  fxRates: DailyPriceSeries,
+  startDate: string,
+  date: string,
+  totalTwd: number,
+  addedCostPoint: boolean
+): boolean {
+  if (addedCostPoint || startDate > date) {
+    return addedCostPoint
+  }
+
+  const totalCostTwd = computeTotalCostTwd(trades, fxRates, date)
+
+  if (totalCostTwd > 0 && Math.round(totalCostTwd) !== Math.round(totalTwd)) {
+    series.push({ date: startDate, value: Math.round(totalCostTwd) })
+  }
+
+  return true
+}
+
 /**
  * Compute a cash-flow-adjusted benchmark value series.
  *
@@ -174,39 +314,7 @@ export function computeBenchmarkSeries(
     return []
   }
 
-  function getBenchmarkPriceTwd(date: string): number | null {
-    const rawPrice = getLastKnownPrice(benchmarkPrices, date)
-
-    if (rawPrice === null) {
-      return null
-    }
-
-    if (!isUsd) {
-      return rawPrice
-    }
-
-    const rate = getLastKnownPrice(fxRates, date)
-
-    return rate !== null ? rawPrice * rate : null
-  }
-
-  function getTradeCashFlowTwd(trade: TradeTableRow, date: string): number {
-    const currency = trade.currency?.trim().toUpperCase() ?? null
-
-    if (currency === "USD") {
-      const rate = getLastKnownPrice(fxRates, date)
-      return trade.totalAmount * (rate ?? 0)
-    }
-
-    return trade.totalAmount
-  }
-
-  // Sort trades chronologically with stable tiebreaker.
   const sortedTrades = stableSortTrades(trades)
-  const earliestTradeDate =
-    sortedTrades.length > 0 ? sortedTrades[0].trade.date : null
-
-  // Walk trades and accumulate benchmark units.
   let benchmarkUnits = 0
   let tradeIdx = 0
   let addedCostPoint = false
@@ -214,62 +322,133 @@ export function computeBenchmarkSeries(
   const series: DailyValuePoint[] = []
 
   for (const date of tradingDates) {
-    // Apply any trades on or before this date — but only if the benchmark
-    // has a price on this date. Otherwise defer trades to the next date
-    // that has a price (so trades aren't silently dropped).
-    const benchPriceForTrades = getBenchmarkPriceTwd(date)
-
-    if (benchPriceForTrades !== null && benchPriceForTrades > 0) {
-      while (tradeIdx < sortedTrades.length) {
-        const { trade } = sortedTrades[tradeIdx]
-
-        if (trade.date > date) {
-          break
-        }
-
-        const cashTwd = getTradeCashFlowTwd(trade, date)
-        const unitsDelta = cashTwd / benchPriceForTrades
-
-        if (trade.side === "BUY") {
-          benchmarkUnits += unitsDelta
-        } else {
-          benchmarkUnits = Math.max(benchmarkUnits - unitsDelta, 0)
-        }
-
-        tradeIdx++
-      }
-    }
+    const tradeProgress = advanceBenchmarkTrades(
+      sortedTrades,
+      tradeIdx,
+      benchmarkUnits,
+      fxRates,
+      benchmarkPrices,
+      isUsd,
+      date
+    )
+    benchmarkUnits = tradeProgress.benchmarkUnits
+    tradeIdx = tradeProgress.tradeIndex
 
     if (benchmarkUnits <= 0) {
       continue
     }
 
-    const priceTwd = getBenchmarkPriceTwd(date)
+    const priceTwd = getBenchmarkPriceTwd(benchmarkPrices, fxRates, isUsd, date)
 
     if (priceTwd !== null) {
       const value = Math.round(benchmarkUnits * priceTwd)
-
-      // Insert synthetic cost-basis point before the first real value
-      // so the benchmark starts at the same value as the portfolio.
-      if (
-        !addedCostPoint &&
-        earliestTradeDate !== null &&
-        earliestTradeDate < date
-      ) {
-        const costTwd = computeTotalCostTwd(trades, fxRates, date)
-
-        if (costTwd > 0) {
-          series.push({ date: earliestTradeDate, value: Math.round(costTwd) })
-        }
-
-        addedCostPoint = true
-      }
-
+      addedCostPoint = addInitialBenchmarkCostPointIfNeeded(
+        series,
+        trades,
+        fxRates,
+        sortedTrades,
+        date,
+        addedCostPoint
+      )
       series.push({ date, value })
     }
   }
 
   return series
+}
+
+function getBenchmarkPriceTwd(
+  benchmarkPrices: DailyPriceSeries,
+  fxRates: DailyPriceSeries,
+  isUsd: boolean,
+  date: string
+): number | null {
+  const rawPrice = getLastKnownPrice(benchmarkPrices, date)
+
+  if (rawPrice === null) {
+    return null
+  }
+
+  if (!isUsd) {
+    return rawPrice
+  }
+
+  const rate = getLastKnownPrice(fxRates, date)
+
+  return rate !== null ? rawPrice * rate : null
+}
+
+function advanceBenchmarkTrades(
+  sortedTrades: SortedTradeEntry[],
+  tradeIndex: number,
+  benchmarkUnits: number,
+  fxRates: DailyPriceSeries,
+  benchmarkPrices: DailyPriceSeries,
+  isUsd: boolean,
+  date: string
+): BenchmarkProgress {
+  const priceTwd = getBenchmarkPriceTwd(benchmarkPrices, fxRates, isUsd, date)
+
+  if (priceTwd === null || priceTwd <= 0) {
+    return {
+      benchmarkUnits,
+      tradeIndex,
+    }
+  }
+
+  let nextBenchmarkUnits = benchmarkUnits
+  let nextTradeIndex = tradeIndex
+
+  while (nextTradeIndex < sortedTrades.length) {
+    const { trade } = sortedTrades[nextTradeIndex]
+
+    if (trade.date > date) {
+      break
+    }
+
+    const cashTwd = getTradeAmountInTwd(trade, fxRates, date)
+    const unitsDelta = cashTwd / priceTwd
+
+    if (trade.side === "BUY") {
+      nextBenchmarkUnits += unitsDelta
+    } else {
+      nextBenchmarkUnits = Math.max(nextBenchmarkUnits - unitsDelta, 0)
+    }
+
+    nextTradeIndex++
+  }
+
+  return {
+    benchmarkUnits: nextBenchmarkUnits,
+    tradeIndex: nextTradeIndex,
+  }
+}
+
+function addInitialBenchmarkCostPointIfNeeded(
+  series: DailyValuePoint[],
+  trades: TradeTableRow[],
+  fxRates: DailyPriceSeries,
+  sortedTrades: SortedTradeEntry[],
+  date: string,
+  addedCostPoint: boolean
+): boolean {
+  const earliestTradeDate = sortedTrades[0]?.trade.date ?? null
+
+  if (
+    addedCostPoint ||
+    earliestTradeDate === null ||
+    earliestTradeDate >= date
+  ) {
+    return addedCostPoint
+  }
+
+  const costTwd = computeTotalCostTwd(trades, fxRates, date)
+
+  if (costTwd > 0) {
+    series.push({ date: earliestTradeDate, value: Math.round(costTwd) })
+  }
+
+  return true
 }
 
 /**
@@ -330,72 +509,38 @@ export function computeDailyValues(
 
   const series: DailyValuePoint[] = []
   let currentPositions = new Map<string, PositionEntry>()
+  let tradeDateIndex = 0
   let addedCostPoint = false
 
   for (const date of dates) {
-    // Apply any trades on or before this date that haven't been applied yet.
-    for (const tradeDate of sortedTradeDates) {
-      if (tradeDate > date) {
-        break
-      }
+    const tradeProgress = advanceTradeEvents(
+      sortedTradeDates,
+      tradeDateIndex,
+      tradeEvents,
+      currentPositions,
+      date
+    )
+    currentPositions = tradeProgress.positions
+    tradeDateIndex = tradeProgress.nextTradeDateIndex
+    const { hasCompleteValue, totalTwd } = computePortfolioValueForDate(
+      currentPositions,
+      date,
+      priceSeries,
+      fxRates
+    )
 
-      const snapshot = tradeEvents.get(tradeDate)
-
-      if (snapshot) {
-        currentPositions = snapshot
-      }
-    }
-
-    // Remove consumed trade events so we don't reprocess them.
-    while (sortedTradeDates.length > 0 && sortedTradeDates[0] <= date) {
-      sortedTradeDates.shift()
-    }
-
-    const fxRate = getLastKnownPrice(fxRates, date)
-    let totalTwd = 0
-    let hasAnyPrice = false
-
-    for (const position of currentPositions.values()) {
-      if (position.quantity <= 0) {
-        continue
-      }
-
-      const price = getLastKnownPrice(priceSeries.get(position.quoteKey), date)
-
-      if (price === null) {
-        continue
-      }
-
-      const nativeValue = position.quantity * price
-
-      if (position.currency === "USD") {
-        // Skip USD positions when no FX rate is available — contributing
-        // zero would create artificial dips in the chart.
-        if (fxRate !== null) {
-          totalTwd += nativeValue * fxRate
-          hasAnyPrice = true
-        }
-      } else {
-        totalTwd += nativeValue
-        hasAnyPrice = true
-      }
-    }
-
-    if (hasAnyPrice) {
+    if (hasCompleteValue) {
       // Insert a synthetic cost-basis point just before the first real
       // market-value point so the chart starts at the deployed capital.
-      if (!addedCostPoint && startDate <= date) {
-        const totalCostTwd = computeTotalCostTwd(trades, fxRates, date)
-
-        if (
-          totalCostTwd > 0 &&
-          Math.round(totalCostTwd) !== Math.round(totalTwd)
-        ) {
-          series.push({ date: startDate, value: Math.round(totalCostTwd) })
-        }
-
-        addedCostPoint = true
-      }
+      addedCostPoint = addInitialCostPointIfNeeded(
+        series,
+        trades,
+        fxRates,
+        startDate,
+        date,
+        totalTwd,
+        addedCostPoint
+      )
 
       series.push({ date, value: Math.round(totalTwd) })
     }

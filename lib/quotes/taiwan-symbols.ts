@@ -123,7 +123,7 @@ function addChineseAliases(
 
 async function fetchTaiwanListedCompanies(fetcher: typeof fetch) {
   const response = await fetcher(TAIWAN_LISTED_COMPANIES_URL, {
-    cache: "force-cache",
+    cache: "no-store",
   })
 
   if (!response.ok) {
@@ -142,7 +142,7 @@ async function fetchTaiwanListedCompanies(fetcher: typeof fetch) {
 
 async function fetchTaiwanIsinPage(url: string, fetcher: typeof fetch) {
   const response = await fetcher(url, {
-    cache: "force-cache",
+    cache: "no-store",
   })
 
   if (!response.ok) {
@@ -280,7 +280,10 @@ async function getTaiwanListings(fetcher: typeof fetch) {
   }
 
   if (!cachedTaiwanListingsPromise) {
-    cachedTaiwanListingsPromise = loadTaiwanListings(fetcher)
+    cachedTaiwanListingsPromise = loadTaiwanListings(fetcher).catch((error) => {
+      cachedTaiwanListingsPromise = null
+      throw error
+    })
   }
 
   return cachedTaiwanListingsPromise
@@ -292,7 +295,12 @@ async function getFinMindTaiwanListings(fetcher: typeof fetch) {
   }
 
   if (!cachedFinMindTaiwanListingsPromise) {
-    cachedFinMindTaiwanListingsPromise = loadFinMindTaiwanListings(fetcher)
+    cachedFinMindTaiwanListingsPromise = loadFinMindTaiwanListings(
+      fetcher
+    ).catch((error) => {
+      cachedFinMindTaiwanListingsPromise = null
+      throw error
+    })
   }
 
   return cachedFinMindTaiwanListingsPromise

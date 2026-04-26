@@ -3,17 +3,14 @@ import "server-only"
 import type { SupportedMarket } from "@/lib/portfolio/schema"
 import {
   type DailyPriceSeries,
+  type PriceCacheResult,
   getCachedFxHistory,
   getCachedTickerHistory,
   setCachedFxHistory,
   setCachedTickerHistory,
 } from "@/lib/quotes/history-cache"
 import { resolveTaiwanTickerByName } from "@/lib/quotes/taiwan-symbols"
-import {
-  buildTwelveDataUrl,
-  fetchTwelveDataJson,
-  parseDecimal,
-} from "@/lib/quotes/twelve-data"
+import { fetchTwelveDataJson, parseDecimal } from "@/lib/quotes/twelve-data"
 import { z } from "zod"
 
 const FINMIND_DATA_URL = "https://api.finmindtrade.com/api/v4/data"
@@ -35,6 +32,11 @@ type BenchmarkDef = {
   symbol: string
 }
 
+type BenchmarkResult = {
+  key: BenchmarkKey
+  prices: DailyPriceSeries
+}
+
 const BENCHMARK_DEFS: Record<BenchmarkKey, BenchmarkDef> = {
   spx: { market: "US", symbol: "SPY" },
   twii: { market: "TW", symbol: "0050" },
@@ -45,6 +47,12 @@ export type HistoryTarget = {
   ticker: string
   market: SupportedMarket
 }
+
+type HistoryCacheLoader = () => Promise<PriceCacheResult | null>
+
+type FreshHistoryFetcher = (
+  existingPrices: DailyPriceSeries | null
+) => Promise<DailyPriceSeries>
 
 // ---------------------------------------------------------------------------
 // Twelve Data time_series (US equities + FX)
@@ -178,15 +186,66 @@ function getIncrementalStartDate(
   return latest.toISOString().slice(0, 10)
 }
 
+function getFetchStartDate(
+  startDate: string,
+  existingPrices: DailyPriceSeries | null
+) {
+  return existingPrices
+    ? getIncrementalStartDate(existingPrices, startDate)
+    : startDate
+}
+
+function mergeHistoricalPrices(
+  existingPrices: DailyPriceSeries | null,
+  newPrices: DailyPriceSeries
+) {
+  return existingPrices ? { ...existingPrices, ...newPrices } : newPrices
+}
+
+function refreshHistoryInBackground(
+  fetchFresh: FreshHistoryFetcher,
+  cachedPrices: DailyPriceSeries,
+  getErrorMessage: (error: unknown) => string
+) {
+  void fetchFresh(cachedPrices).catch((error) => {
+    console.warn(getErrorMessage(error))
+  })
+}
+
+async function resolveCachedHistory({
+  loadCached,
+  fetchFresh,
+  getBackgroundRefreshError,
+}: {
+  loadCached: HistoryCacheLoader
+  fetchFresh: FreshHistoryFetcher
+  getBackgroundRefreshError: (error: unknown) => string
+}) {
+  const cached = await loadCached()
+
+  if (cached?.fresh) {
+    return cached.prices
+  }
+
+  if (cached?.usable) {
+    refreshHistoryInBackground(
+      fetchFresh,
+      cached.prices,
+      getBackgroundRefreshError
+    )
+    return cached.prices
+  }
+
+  return fetchFresh(cached?.prices ?? null)
+}
+
 async function fetchFreshTickerHistory(
   target: HistoryTarget,
   startDate: string,
   existingPrices: DailyPriceSeries | null,
   fetcher: typeof fetch
 ): Promise<DailyPriceSeries> {
-  const fetchStart = existingPrices
-    ? getIncrementalStartDate(existingPrices, startDate)
-    : startDate
+  const fetchStart = getFetchStartDate(startDate, existingPrices)
 
   let newPrices: DailyPriceSeries
 
@@ -201,7 +260,7 @@ async function fetchFreshTickerHistory(
     )
   }
 
-  const merged = existingPrices ? { ...existingPrices, ...newPrices } : newPrices
+  const merged = mergeHistoricalPrices(existingPrices, newPrices)
 
   await setCachedTickerHistory(target.key, merged)
 
@@ -213,32 +272,13 @@ export async function fetchTickerHistory(
   startDate: string,
   fetcher: typeof fetch = fetch
 ): Promise<DailyPriceSeries> {
-  const cached = await getCachedTickerHistory(target.key)
-
-  if (cached?.fresh) {
-    return cached.prices
-  }
-
-  // Stale but usable — return immediately, refresh in background
-  if (cached?.usable) {
-    void fetchFreshTickerHistory(target, startDate, cached.prices, fetcher).catch(
-      (error) => {
-        console.warn(
-          `[history] Background refresh failed for ${target.key}:`,
-          error instanceof Error ? error.message : error
-        )
-      }
-    )
-    return cached.prices
-  }
-
-  // No usable data — must fetch synchronously
-  return fetchFreshTickerHistory(
-    target,
-    startDate,
-    cached?.prices ?? null,
-    fetcher
-  )
+  return resolveCachedHistory({
+    loadCached: () => getCachedTickerHistory(target.key),
+    fetchFresh: (existingPrices) =>
+      fetchFreshTickerHistory(target, startDate, existingPrices, fetcher),
+    getBackgroundRefreshError: (error) =>
+      `[history] Background refresh failed for ${target.key}: ${error instanceof Error ? error.message : String(error)}`,
+  })
 }
 
 async function fetchFreshFxHistory(
@@ -246,9 +286,7 @@ async function fetchFreshFxHistory(
   existingPrices: DailyPriceSeries | null,
   fetcher: typeof fetch
 ): Promise<DailyPriceSeries> {
-  const fetchStart = existingPrices
-    ? getIncrementalStartDate(existingPrices, startDate)
-    : startDate
+  const fetchStart = getFetchStartDate(startDate, existingPrices)
 
   const newRates = await fetchTwelveDataTimeSeries(
     "USD/TWD",
@@ -256,7 +294,7 @@ async function fetchFreshFxHistory(
     fetcher
   )
 
-  const merged = existingPrices ? { ...existingPrices, ...newRates } : newRates
+  const merged = mergeHistoricalPrices(existingPrices, newRates)
 
   await setCachedFxHistory(merged)
 
@@ -267,85 +305,100 @@ export async function fetchFxHistory(
   startDate: string,
   fetcher: typeof fetch = fetch
 ): Promise<DailyPriceSeries> {
-  const cached = await getCachedFxHistory()
-
-  if (cached?.fresh) {
-    return cached.prices
-  }
-
-  // Stale but usable — return immediately, refresh in background
-  if (cached?.usable) {
-    void fetchFreshFxHistory(startDate, cached.prices, fetcher).catch(
-      (error) => {
-        console.warn(
-          "[history] Background FX refresh failed:",
-          error instanceof Error ? error.message : error
-        )
-      }
-    )
-    return cached.prices
-  }
-
-  return fetchFreshFxHistory(startDate, cached?.prices ?? null, fetcher)
+  return resolveCachedHistory({
+    loadCached: () => getCachedFxHistory(),
+    fetchFresh: (existingPrices) =>
+      fetchFreshFxHistory(startDate, existingPrices, fetcher),
+    getBackgroundRefreshError: (error) =>
+      `[history] Background FX refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+  })
 }
 
-export async function fetchBenchmarkHistory(
+async function fetchBenchmarkPrices(
+  def: BenchmarkDef,
   startDate: string,
-  fetcher: typeof fetch = fetch
-): Promise<RawBenchmarkPrices> {
-  const results = await Promise.all(
-    (Object.keys(BENCHMARK_DEFS) as BenchmarkKey[]).map(async (key) => {
-      const cacheKey = BENCHMARK_CACHE_KEYS[key]
-      const def = BENCHMARK_DEFS[key]
-      const cached = await getCachedTickerHistory(cacheKey)
+  fetcher: typeof fetch
+) {
+  return def.market === "TW"
+    ? fetchFinMindDailyPrices(def.symbol, startDate, fetcher)
+    : fetchTwelveDataTimeSeries(def.symbol, startDate, fetcher)
+}
 
-      if (cached?.fresh) {
-        return { key, prices: cached.prices }
-      }
-
-      // Stale but usable — return stale, refresh in background
-      if (cached?.usable) {
-        void (async () => {
-          try {
-            const fetchStart = getIncrementalStartDate(cached.prices, startDate)
-            const newPrices =
-              def.market === "TW"
-                ? await fetchFinMindDailyPrices(def.symbol, fetchStart, fetcher)
-                : await fetchTwelveDataTimeSeries(def.symbol, fetchStart, fetcher)
-            const merged = { ...cached.prices, ...newPrices }
-            await setCachedTickerHistory(cacheKey, merged)
-          } catch (error) {
-            console.warn(
-              `[history] Background benchmark refresh failed for ${key}:`,
-              error instanceof Error ? error.message : error
-            )
-          }
-        })()
-        return { key, prices: cached.prices }
-      }
-
-      try {
-        const fetchStart = cached
-          ? getIncrementalStartDate(cached.prices, startDate)
-          : startDate
-
-        const newPrices =
-          def.market === "TW"
-            ? await fetchFinMindDailyPrices(def.symbol, fetchStart, fetcher)
-            : await fetchTwelveDataTimeSeries(def.symbol, fetchStart, fetcher)
-
-        const merged = cached ? { ...cached.prices, ...newPrices } : newPrices
-
-        await setCachedTickerHistory(cacheKey, merged)
-
-        return { key, prices: merged }
-      } catch {
-        // Return stale data if available, otherwise empty.
-        return { key, prices: cached?.prices ?? {} }
-      }
-    })
+async function fetchAndCacheBenchmarkPrices(
+  key: BenchmarkKey,
+  startDate: string,
+  fetcher: typeof fetch,
+  existingPrices: DailyPriceSeries | null
+) {
+  const cacheKey = BENCHMARK_CACHE_KEYS[key]
+  const fetchStart = existingPrices
+    ? getIncrementalStartDate(existingPrices, startDate)
+    : startDate
+  const newPrices = await fetchBenchmarkPrices(
+    BENCHMARK_DEFS[key],
+    fetchStart,
+    fetcher
   )
+  const merged = existingPrices
+    ? { ...existingPrices, ...newPrices }
+    : newPrices
 
+  await setCachedTickerHistory(cacheKey, merged)
+
+  return merged
+}
+
+function refreshBenchmarkPricesInBackground(
+  key: BenchmarkKey,
+  startDate: string,
+  fetcher: typeof fetch,
+  existingPrices: DailyPriceSeries
+) {
+  void fetchAndCacheBenchmarkPrices(
+    key,
+    startDate,
+    fetcher,
+    existingPrices
+  ).catch((error) => {
+    console.warn(
+      `[history] Background benchmark refresh failed for ${key}:`,
+      error instanceof Error ? error.message : error
+    )
+  })
+}
+
+async function fetchBenchmarkResult(
+  key: BenchmarkKey,
+  startDate: string,
+  fetcher: typeof fetch
+): Promise<BenchmarkResult> {
+  const cached = await getCachedTickerHistory(BENCHMARK_CACHE_KEYS[key])
+
+  if (cached?.fresh) {
+    return { key, prices: cached.prices }
+  }
+
+  if (cached?.usable) {
+    refreshBenchmarkPricesInBackground(key, startDate, fetcher, cached.prices)
+    return { key, prices: cached.prices }
+  }
+
+  try {
+    const prices = await fetchAndCacheBenchmarkPrices(
+      key,
+      startDate,
+      fetcher,
+      cached?.prices ?? null
+    )
+
+    return { key, prices }
+  } catch {
+    // Return stale data if available, otherwise empty.
+    return { key, prices: cached?.prices ?? {} }
+  }
+}
+
+function buildBenchmarkPrices(results: BenchmarkResult[]): RawBenchmarkPrices {
   const benchmarks: RawBenchmarkPrices = { spx: {}, twii: {} }
 
   for (const result of results) {
@@ -353,4 +406,17 @@ export async function fetchBenchmarkHistory(
   }
 
   return benchmarks
+}
+
+export async function fetchBenchmarkHistory(
+  startDate: string,
+  fetcher: typeof fetch = fetch
+): Promise<RawBenchmarkPrices> {
+  const results = await Promise.all(
+    (Object.keys(BENCHMARK_DEFS) as BenchmarkKey[]).map((key) =>
+      fetchBenchmarkResult(key, startDate, fetcher)
+    )
+  )
+
+  return buildBenchmarkPrices(results)
 }

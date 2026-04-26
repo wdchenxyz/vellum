@@ -1,15 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import {
-  fetchHotNewsFromSource,
-  type NewsItem,
-} from "@/lib/news/newsnow-client"
+import { fetchHotNewsFromSource } from "@/lib/news/newsnow-client"
 
 function createMockResponse(items: Record<string, unknown>[]) {
   return {
     ok: true,
     status: 200,
     json: async () => ({ items }),
+  } as unknown as Response
+}
+
+function createErrorResponse(status: number = 500) {
+  return {
+    ok: false,
+    status,
+    json: async () => ({ items: [] }),
   } as unknown as Response
 }
 
@@ -61,9 +66,7 @@ describe("fetchHotNewsFromSource", () => {
       title: `Headline ${i}`,
       url: `https://example.com/${i}`,
     }))
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(createMockResponse(items))
+    const mockFetch = vi.fn().mockResolvedValue(createMockResponse(items))
 
     const result = await fetchHotNewsFromSource("weibo", 5, mockFetch)
 
@@ -71,11 +74,13 @@ describe("fetchHotNewsFromSource", () => {
   })
 
   it("uses cache for repeated calls within 5 minutes", async () => {
-    const mockFetch = vi.fn().mockResolvedValue(
-      createMockResponse([
-        { id: "1", title: "Cached", url: "https://example.com" },
-      ])
-    )
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        createMockResponse([
+          { id: "1", title: "Cached", url: "https://example.com" },
+        ])
+      )
 
     await fetchHotNewsFromSource("cls", 10, mockFetch)
     await fetchHotNewsFromSource("cls", 10, mockFetch)
@@ -84,11 +89,13 @@ describe("fetchHotNewsFromSource", () => {
   })
 
   it("re-fetches after cache expires (5 minutes)", async () => {
-    const mockFetch = vi.fn().mockResolvedValue(
-      createMockResponse([
-        { id: "1", title: "Fresh", url: "https://example.com" },
-      ])
-    )
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        createMockResponse([
+          { id: "1", title: "Fresh", url: "https://example.com" },
+        ])
+      )
 
     await fetchHotNewsFromSource("cls", 10, mockFetch)
 
@@ -101,9 +108,7 @@ describe("fetchHotNewsFromSource", () => {
   })
 
   it("returns empty array on fetch failure", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockRejectedValue(new Error("Network error"))
+    const mockFetch = vi.fn().mockRejectedValue(new Error("Network error"))
 
     const result = await fetchHotNewsFromSource("cls", 10, mockFetch)
 
@@ -129,5 +134,49 @@ describe("fetchHotNewsFromSource", () => {
 
     expect(result).toHaveLength(1)
     expect(result[0].title).toBe("Stale")
+  })
+
+  it("returns stale cache on non-ok responses if available", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createMockResponse([
+          { id: "1", title: "Cached", url: "https://example.com" },
+        ])
+      )
+      .mockResolvedValueOnce(createErrorResponse(503))
+
+    await fetchHotNewsFromSource("cls", 10, mockFetch)
+
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1)
+
+    const result = await fetchHotNewsFromSource("cls", 10, mockFetch)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].title).toBe("Cached")
+  })
+
+  it("generates fallback ids and defaults for partial items", async () => {
+    vi.setSystemTime(new Date("2026-04-02T12:00:00Z"))
+    const mockFetch = vi.fn().mockResolvedValue(
+      createMockResponse([
+        {
+          title: "Untitled id fallback",
+        },
+      ])
+    )
+
+    const result = await fetchHotNewsFromSource("cls", 10, mockFetch)
+
+    expect(result).toEqual([
+      {
+        id: "cls_1775131200000_1",
+        source: "cls",
+        rank: 1,
+        title: "Untitled id fallback",
+        url: "",
+        metadata: {},
+      },
+    ])
   })
 })

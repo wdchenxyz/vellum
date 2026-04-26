@@ -224,7 +224,7 @@ export function TradeExtractor() {
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
   const [dailySeries, setDailySeries] = useState<DailyValuePoint[]>([])
-  const [dailyCostBasis, setDailyCostBasis] = useState(0)
+  const [dailyCostBasis, setDailyCostBasis] = useState<number | null>(null)
   const [dailyBenchmarks, setDailyBenchmarks] = useState<BenchmarkSeries>({
     spx: [],
     twii: [],
@@ -440,6 +440,8 @@ export function TradeExtractor() {
     if (rows.length === 0) {
       setDailyStatus("idle")
       setDailyIssue(null)
+      setDailyBenchmarks({ spx: [], twii: [] })
+      setDailyCostBasis(null)
       setDailySeries([])
       return
     }
@@ -449,6 +451,9 @@ export function TradeExtractor() {
     async function loadDailyValues() {
       setDailyStatus("loading")
       setDailyIssue(null)
+      setDailyBenchmarks({ spx: [], twii: [] })
+      setDailyCostBasis(null)
+      setDailySeries([])
 
       try {
         const response = await fetch("/api/portfolio/daily-values", {

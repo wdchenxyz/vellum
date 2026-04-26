@@ -4,6 +4,7 @@ import path from "node:path"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { setCachedFxSnapshot } from "@/lib/quotes/cache"
 import {
   fetchPreviousCloseSnapshots,
   fetchUsdTwdFxSnapshot,
@@ -67,6 +68,29 @@ describe("fetchPreviousCloseSnapshots", () => {
   const originalRequestDelay = process.env.TWELVEDATA_REQUEST_DELAY_MS
   const tempDirectories: string[] = []
 
+  function restoreEnv(
+    name: "TWELVEDATA_API_KEY" | "TWELVEDATA_REQUEST_DELAY_MS"
+  ) {
+    const originalValue =
+      name === "TWELVEDATA_API_KEY" ? originalApiKey : originalRequestDelay
+
+    if (originalValue === undefined) {
+      delete process.env[name]
+      return
+    }
+
+    process.env[name] = originalValue
+  }
+
+  function restoreQuoteCacheEnv() {
+    if (originalQuoteCacheFilePath === undefined) {
+      delete process.env.QUOTE_CACHE_FILE_PATH
+      return
+    }
+
+    process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
+  }
+
   async function createTempQuoteCacheFilePath() {
     const directory = await mkdtemp(path.join(tmpdir(), "vellum-quotes-"))
     tempDirectories.push(directory)
@@ -80,9 +104,10 @@ describe("fetchPreviousCloseSnapshots", () => {
   })
 
   afterEach(async () => {
-    process.env.TWELVEDATA_API_KEY = originalApiKey
-    process.env.TWELVEDATA_REQUEST_DELAY_MS = originalRequestDelay
-    process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
+    vi.useRealTimers()
+    restoreEnv("TWELVEDATA_API_KEY")
+    restoreEnv("TWELVEDATA_REQUEST_DELAY_MS")
+    restoreQuoteCacheEnv()
     await Promise.all(
       tempDirectories
         .splice(0)
@@ -210,6 +235,17 @@ describe("fetchPreviousCloseSnapshots", () => {
       fetchMock.mock.calls.some(([input]) =>
         input.toString().includes("dataset=TaiwanStockInfo")
       )
+    ).toBe(true)
+    expect(
+      fetchMock.mock.calls
+        .filter(([input]) =>
+          [
+            "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+            "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
+            "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4",
+          ].includes(input.toString())
+        )
+        .every(([, init]) => init?.cache === "no-store")
     ).toBe(true)
     expect(result).toEqual([
       {
@@ -416,6 +452,29 @@ describe("fetchUsdTwdFxSnapshot", () => {
   const originalRequestDelay = process.env.TWELVEDATA_REQUEST_DELAY_MS
   const tempDirectories: string[] = []
 
+  function restoreEnv(
+    name: "TWELVEDATA_API_KEY" | "TWELVEDATA_REQUEST_DELAY_MS"
+  ) {
+    const originalValue =
+      name === "TWELVEDATA_API_KEY" ? originalApiKey : originalRequestDelay
+
+    if (originalValue === undefined) {
+      delete process.env[name]
+      return
+    }
+
+    process.env[name] = originalValue
+  }
+
+  function restoreQuoteCacheEnv() {
+    if (originalQuoteCacheFilePath === undefined) {
+      delete process.env.QUOTE_CACHE_FILE_PATH
+      return
+    }
+
+    process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
+  }
+
   async function createTempQuoteCacheFilePath() {
     const directory = await mkdtemp(path.join(tmpdir(), "vellum-fx-"))
     tempDirectories.push(directory)
@@ -429,9 +488,10 @@ describe("fetchUsdTwdFxSnapshot", () => {
   })
 
   afterEach(async () => {
-    process.env.TWELVEDATA_API_KEY = originalApiKey
-    process.env.TWELVEDATA_REQUEST_DELAY_MS = originalRequestDelay
-    process.env.QUOTE_CACHE_FILE_PATH = originalQuoteCacheFilePath
+    vi.useRealTimers()
+    restoreEnv("TWELVEDATA_API_KEY")
+    restoreEnv("TWELVEDATA_REQUEST_DELAY_MS")
+    restoreQuoteCacheEnv()
     await Promise.all(
       tempDirectories
         .splice(0)
@@ -470,6 +530,36 @@ describe("fetchUsdTwdFxSnapshot", () => {
     const second = await fetchUsdTwdFxSnapshot(fetchMock as typeof fetch)
 
     expect(first).toEqual(second)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns a stale USD/TWD snapshot while refreshing it in the background", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-03-16T00:00:00.000Z"))
+
+    await setCachedFxSnapshot({
+      asOf: "2026-03-16",
+      pair: "USD/TWD",
+      rate: 31.5,
+    })
+
+    vi.setSystemTime(new Date("2026-03-17T13:00:00.000Z"))
+
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        close: "31.95997",
+        datetime: "2026-03-17",
+        symbol: "USD/TWD",
+      })
+    )
+
+    const result = await fetchUsdTwdFxSnapshot(fetchMock as typeof fetch)
+
+    expect(result).toEqual({
+      asOf: "2026-03-16",
+      pair: "USD/TWD",
+      rate: 31.5,
+    })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

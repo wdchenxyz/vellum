@@ -120,6 +120,10 @@ function getMicPriority(market: SupportedMarket) {
   return market === "TW" ? TW_MIC_PRIORITY : US_MIC_PRIORITY
 }
 
+function getLookupKey(target: PreviousCloseLookupTarget) {
+  return getHoldingKey({ market: target.market, ticker: target.ticker })
+}
+
 export function parseDecimal(value: string) {
   const parsed = Number(value)
 
@@ -231,6 +235,23 @@ export function selectInstrumentMatch(
   })[0]
 }
 
+function buildPreviousCloseErrorQuote(
+  target: PreviousCloseLookupTarget,
+  error: unknown
+): PreviousCloseQuote {
+  return {
+    asOf: null,
+    currency: target.market === "TW" ? "TWD" : "USD",
+    error: getErrorMessage(error),
+    exchange: null,
+    key: getLookupKey(target),
+    market: target.market,
+    micCode: null,
+    previousClose: null,
+    ticker: target.ticker.trim().toUpperCase(),
+  }
+}
+
 async function resolveInstrument(
   target: PreviousCloseLookupTarget,
   fetcher: typeof fetch
@@ -259,7 +280,10 @@ async function resolveInstrument(
   }
 
   // Check instrument resolution cache first
-  const cacheKey = getHoldingKey({ market: target.market, ticker: target.ticker })
+  const cacheKey = getHoldingKey({
+    market: target.market,
+    ticker: target.ticker,
+  })
   const cached = await getCachedInstrumentResolution(cacheKey)
 
   if (cached) {
@@ -315,7 +339,7 @@ async function fetchPreviousClose(
       asOf: taiwanQuote.asOf,
       currency: "TWD",
       exchange: instrument.exchange,
-      key: getHoldingKey({ market: target.market, ticker: target.ticker }),
+      key: getLookupKey(target),
       market: target.market,
       micCode: instrument.mic_code,
       previousClose: taiwanQuote.previousClose,
@@ -352,7 +376,7 @@ async function fetchPreviousClose(
     asOf: parsed.data.datetime ?? null,
     currency: parsed.data.currency ?? instrument.currency ?? null,
     exchange: parsed.data.exchange ?? instrument.exchange,
-    key: getHoldingKey({ market: target.market, ticker: target.ticker }),
+    key: getLookupKey(target),
     market: target.market,
     micCode: parsed.data.mic_code ?? instrument.mic_code,
     previousClose: parseDecimal(parsed.data.close),
@@ -360,45 +384,26 @@ async function fetchPreviousClose(
   }
 }
 
-export async function fetchPreviousCloseSnapshots(
+async function fetchMissingPreviousCloseQuotes(
   targets: PreviousCloseLookupTarget[],
-  fetcher: typeof fetch = fetch
-): Promise<PreviousCloseQuote[]> {
-  const { freshQuotes, staleTargets, staleQuotes, missingTargets } =
-    await getCachedPreviousCloseQuotes(targets)
-
-  // Targets that truly need fetching before we can respond
-  const mustFetchTargets = missingTargets
-
-  // Fetch missing quotes (blocking — we have no data for these)
-  const fetchedQuotes = await Promise.all(
-    mustFetchTargets.map(async (target) => {
+  fetcher: typeof fetch
+) {
+  return Promise.all(
+    targets.map(async (target) => {
       try {
         return await fetchPreviousClose(target, fetcher)
       } catch (error) {
-        return {
-          asOf: null,
-          currency: target.market === "TW" ? "TWD" : "USD",
-          error: getErrorMessage(error),
-          exchange: null,
-          key: getHoldingKey({ market: target.market, ticker: target.ticker }),
-          market: target.market,
-          micCode: null,
-          previousClose: null,
-          ticker: target.ticker.trim().toUpperCase(),
-        }
+        return buildPreviousCloseErrorQuote(target, error)
       }
     })
   )
+}
 
-  await setCachedPreviousCloseQuotes(fetchedQuotes)
-
-  // Background refresh for stale entries (fire-and-forget)
-  if (staleTargets.length > 0) {
-    void refreshStaleQuotes(staleTargets, fetcher)
-  }
-
-  // Merge all results: fresh + stale + freshly fetched
+function buildPreviousCloseLookup(
+  freshQuotes: Record<string, PreviousCloseQuote>,
+  staleQuotes: Record<string, PreviousCloseQuote>,
+  fetchedQuotes: PreviousCloseQuote[]
+) {
   const quotesByKey: Record<string, PreviousCloseQuote> = {
     ...freshQuotes,
     ...staleQuotes,
@@ -408,10 +413,53 @@ export async function fetchPreviousCloseSnapshots(
     quotesByKey[quote.key] = quote
   }
 
-  return targets.map((target) => {
-    const key = getHoldingKey({ market: target.market, ticker: target.ticker })
-    return quotesByKey[key]
-  })
+  return quotesByKey
+}
+
+function mapQuotesToTargets(
+  targets: PreviousCloseLookupTarget[],
+  quotesByKey: Record<string, PreviousCloseQuote>
+) {
+  return targets.map((target) => quotesByKey[getLookupKey(target)])
+}
+
+function getCachedFxSnapshotOrRefresh(
+  cachedResult: FxSnapshotCacheResult,
+  fetcher: typeof fetch
+) {
+  if (!cachedResult) {
+    return null
+  }
+
+  if (!cachedResult.fresh) {
+    void refreshFxSnapshot(fetcher)
+  }
+
+  return cachedResult.snapshot
+}
+
+export async function fetchPreviousCloseSnapshots(
+  targets: PreviousCloseLookupTarget[],
+  fetcher: typeof fetch = fetch
+): Promise<PreviousCloseQuote[]> {
+  const { freshQuotes, staleTargets, staleQuotes, missingTargets } =
+    await getCachedPreviousCloseQuotes(targets)
+
+  const fetchedQuotes = await fetchMissingPreviousCloseQuotes(
+    missingTargets,
+    fetcher
+  )
+
+  await setCachedPreviousCloseQuotes(fetchedQuotes)
+
+  if (staleTargets.length > 0) {
+    void refreshStaleQuotes(staleTargets, fetcher)
+  }
+
+  return mapQuotesToTargets(
+    targets,
+    buildPreviousCloseLookup(freshQuotes, staleQuotes, fetchedQuotes)
+  )
 }
 
 async function refreshStaleQuotes(
@@ -437,19 +485,14 @@ async function refreshStaleQuotes(
 }
 
 export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
-  const cachedResult: FxSnapshotCacheResult = await getCachedFxSnapshot("USD/TWD")
+  const cachedResult: FxSnapshotCacheResult =
+    await getCachedFxSnapshot("USD/TWD")
+  const cachedSnapshot = getCachedFxSnapshotOrRefresh(cachedResult, fetcher)
 
-  if (cachedResult?.fresh) {
-    return cachedResult.snapshot
+  if (cachedSnapshot) {
+    return cachedSnapshot
   }
 
-  // If we have stale data, return it and refresh in background
-  if (cachedResult && !cachedResult.fresh) {
-    void refreshFxSnapshot(fetcher)
-    return cachedResult.snapshot
-  }
-
-  // No cached data at all — must fetch
   return await fetchFreshFxSnapshot(fetcher)
 }
 

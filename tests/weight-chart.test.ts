@@ -108,4 +108,54 @@ describe("buildPortfolioWeightChartSummary", () => {
       },
     ])
   })
+
+  it("defaults empty selections to both buckets and leaves mixed-currency weights pending without FX", () => {
+    const result = buildPortfolioWeightChartSummary({
+      activeBuckets: [],
+      holdings: [
+        {
+          bucket: "TWD",
+          costBasis: 280000,
+          key: "TW:2313",
+          marketValue: 320000,
+        },
+        { bucket: "USD", costBasis: 800, key: "US:ASTS", marketValue: 1000 },
+      ],
+      usdTwdRate: null,
+    })
+
+    expect(result.activeBuckets).toEqual(["TWD", "USD"])
+    expect(result.baseCurrency).toBe("TWD")
+    expect(result.needsFxRateForActive).toBe(true)
+    expect(result.needsFxRateForAll).toBe(true)
+    expect(result.allMarketValueTotal).toBe(320000)
+    expect(result.bars).toEqual([
+      {
+        activeWeight: null,
+        allWeight: null,
+        convertedCostBasis: 280000,
+        convertedMarketValue: 320000,
+        costWeight: null,
+        displayWeight: null,
+        isUnderwater: false,
+        isActive: true,
+        key: "TW:2313",
+        profitWeight: null,
+        unrealizedAmount: 40000,
+      },
+      {
+        activeWeight: null,
+        allWeight: null,
+        convertedCostBasis: null,
+        convertedMarketValue: null,
+        costWeight: null,
+        displayWeight: null,
+        isUnderwater: false,
+        isActive: true,
+        key: "US:ASTS",
+        profitWeight: null,
+        unrealizedAmount: null,
+      },
+    ])
+  })
 })

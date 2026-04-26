@@ -18,12 +18,17 @@ interface CacheEntry {
   data: NewsItem[]
 }
 
+interface RawNewsItem {
+  id?: string
+  title?: string
+  url?: string
+  publish_time?: string
+  extra?: Record<string, unknown>
+}
+
 // WeakMap keyed on the fetcher so injected test fns each get isolated caches,
 // while production always uses the same global `fetch` reference.
-const cachesByFetcher = new WeakMap<
-  typeof fetch,
-  Map<string, CacheEntry>
->()
+const cachesByFetcher = new WeakMap<typeof fetch, Map<string, CacheEntry>>()
 
 function getCacheFor(fetcher: typeof fetch): Map<string, CacheEntry> {
   let cache = cachesByFetcher.get(fetcher)
@@ -34,62 +39,92 @@ function getCacheFor(fetcher: typeof fetch): Map<string, CacheEntry> {
   return cache
 }
 
+function getCacheKey(sourceId: string, count: number) {
+  return `${sourceId}_${count}`
+}
+
+function hasFreshCache(
+  entry: CacheEntry | undefined,
+  now: number
+): entry is CacheEntry {
+  return Boolean(entry && now - entry.time < CACHE_TTL_MS)
+}
+
+function getRequestUrl(sourceId: string) {
+  return `${BASE_URL}/api/s?id=${encodeURIComponent(sourceId)}`
+}
+
+function getRequestInit(): RequestInit {
+  return {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(30_000),
+  }
+}
+
+async function fetchSourceItems(sourceId: string, fetcher: typeof fetch) {
+  const response = await fetcher(getRequestUrl(sourceId), getRequestInit())
+
+  if (!response.ok) {
+    return null
+  }
+
+  const data = (await response.json()) as {
+    items?: RawNewsItem[]
+  }
+
+  return data.items ?? []
+}
+
+function normalizeNewsItems(
+  items: RawNewsItem[],
+  sourceId: string,
+  count: number,
+  now: number
+): NewsItem[] {
+  return items.slice(0, count).map((item, index) => ({
+    id: item.id ?? `${sourceId}_${now}_${index + 1}`,
+    source: sourceId,
+    rank: index + 1,
+    title: item.title ?? "",
+    url: item.url ?? "",
+    publishTime: item.publish_time,
+    metadata: item.extra ?? {},
+  }))
+}
+
+function getFallbackItems(cached: CacheEntry | undefined) {
+  return cached?.data ?? []
+}
+
 export async function fetchHotNewsFromSource(
   sourceId: string,
   count: number = 15,
   fetcher: typeof fetch = fetch
 ): Promise<NewsItem[]> {
   const cache = getCacheFor(fetcher)
-  const cacheKey = `${sourceId}_${count}`
+  const cacheKey = getCacheKey(sourceId, count)
   const cached = cache.get(cacheKey)
   const now = Date.now()
 
-  if (cached && now - cached.time < CACHE_TTL_MS) {
+  if (hasFreshCache(cached, now)) {
     return cached.data
   }
 
   try {
-    const response = await fetcher(
-      `${BASE_URL}/api/s?id=${encodeURIComponent(sourceId)}`,
-      {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        },
-        signal: AbortSignal.timeout(30_000),
-      }
-    )
+    const items = await fetchSourceItems(sourceId, fetcher)
 
-    if (!response.ok) {
-      if (cached) return cached.data
-      return []
+    if (!items) {
+      return getFallbackItems(cached)
     }
 
-    const data = (await response.json()) as {
-      items?: Array<{
-        id?: string
-        title?: string
-        url?: string
-        publish_time?: string
-        extra?: Record<string, unknown>
-      }>
-    }
-
-    const items = (data.items ?? []).slice(0, count)
-    const processed: NewsItem[] = items.map((item, i) => ({
-      id: item.id ?? `${sourceId}_${now}_${i + 1}`,
-      source: sourceId,
-      rank: i + 1,
-      title: item.title ?? "",
-      url: item.url ?? "",
-      publishTime: item.publish_time,
-      metadata: item.extra ?? {},
-    }))
+    const processed = normalizeNewsItems(items, sourceId, count, now)
 
     cache.set(cacheKey, { time: now, data: processed })
     return processed
   } catch {
-    if (cached) return cached.data
-    return []
+    return getFallbackItems(cached)
   }
 }

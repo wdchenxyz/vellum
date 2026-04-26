@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
 
-import { computeDailyValues } from "@/lib/portfolio/daily-values"
+import {
+  computeBenchmarkSeries,
+  computeDailyValues,
+} from "@/lib/portfolio/daily-values"
 import type { DailyPriceSeries } from "@/lib/quotes/history-cache"
 import type { TradeTableRow } from "@/lib/trades/schema"
 
@@ -258,12 +261,40 @@ describe("computeDailyValues", () => {
 
     const result = computeDailyValues(trades, prices, fxRates)
 
-    // On 2026-03-03: USD position skipped (no FX), TWD position counted.
-    // On 2026-03-05: Both positions counted.
+    // On 2026-03-03 the portfolio is still missing USD FX coverage, so the
+    // total asset value stays pending instead of emitting a partial TWD-only
+    // total. On 2026-03-05 both positions are fully valued.
     expect(result).toEqual([
-      { date: "2026-03-01", value: 1000 },
-      { date: "2026-03-03", value: 100 * 80 },
+      { date: "2026-03-01", value: Math.round(1000 * 32 + 1000) },
       { date: "2026-03-05", value: Math.round(10 * 105 * 32 + 100 * 82) },
+    ])
+  })
+
+  it("waits for every open holding to have market prices before emitting a daily asset value", () => {
+    const trades = [
+      makeTrade({ date: "2026-03-01", ticker: "AAPL", quantity: 10 }),
+      makeTrade({
+        date: "2026-03-01",
+        ticker: "0050",
+        quantity: 100,
+        currency: "TWD",
+      }),
+    ]
+
+    const prices = new Map([
+      ["US:AAPL", makePrices({ "2026-03-03": 100, "2026-03-04": 102 })],
+      ["TW:0050", makePrices({ "2026-03-04": 80 })],
+    ])
+    const fxRates = makePrices({
+      "2026-03-03": 32,
+      "2026-03-04": 32,
+    })
+
+    const result = computeDailyValues(trades, prices, fxRates)
+
+    expect(result).toEqual([
+      { date: "2026-03-01", value: Math.round(1000 * 32 + 1000) },
+      { date: "2026-03-04", value: Math.round(10 * 102 * 32 + 100 * 80) },
     ])
   })
 
@@ -314,5 +345,73 @@ describe("computeDailyValues", () => {
       date: "2025-02-12",
       value: Math.round(10 * 110 * 33 + 5 * 200 * 33),
     })
+  })
+})
+
+describe("computeBenchmarkSeries", () => {
+  it("adds a synthetic cost point before the first benchmark value", () => {
+    const trades = [makeTrade({ date: "2026-03-01", ticker: "AAPL" })]
+
+    const result = computeBenchmarkSeries(
+      trades,
+      makePrices({ "2026-03-03": 100 }),
+      makePrices({ "2026-03-03": 32 }),
+      ["2026-03-03"],
+      true
+    )
+
+    expect(result).toEqual([
+      { date: "2026-03-01", value: 32000 },
+      { date: "2026-03-03", value: 32000 },
+    ])
+  })
+
+  it("defers applying trades until the benchmark has a usable price", () => {
+    const trades = [
+      makeTrade({ date: "2026-03-01", ticker: "AAPL", totalAmount: 1000 }),
+      makeTrade({
+        date: "2026-03-02",
+        ticker: "AAPL",
+        side: "SELL",
+        totalAmount: 250,
+      }),
+    ]
+
+    const result = computeBenchmarkSeries(
+      trades,
+      makePrices({ "2026-03-01": 100, "2026-03-03": 100 }),
+      makePrices({ "2026-03-03": 32 }),
+      ["2026-03-01", "2026-03-03"],
+      true
+    )
+
+    expect(result).toEqual([
+      { date: "2026-03-01", value: 24000 },
+      { date: "2026-03-03", value: 24000 },
+    ])
+  })
+
+  it("uses benchmark prices directly for TWD-denominated series", () => {
+    const trades = [
+      makeTrade({
+        currency: "TWD",
+        date: "2026-03-01",
+        ticker: "0050",
+        totalAmount: 8000,
+      }),
+    ]
+
+    const result = computeBenchmarkSeries(
+      trades,
+      makePrices({ "2026-03-03": 80 }),
+      makePrices({}),
+      ["2026-03-03"],
+      false
+    )
+
+    expect(result).toEqual([
+      { date: "2026-03-01", value: 8000 },
+      { date: "2026-03-03", value: 8000 },
+    ])
   })
 })

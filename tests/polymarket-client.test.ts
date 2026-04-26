@@ -43,6 +43,12 @@ describe("fetchActiveMarkets", () => {
       outcomePrices: ["0.65", "0.35"],
       volume: "1500000",
     })
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      },
+    })
   })
 
   it("limits to requested count", async () => {
@@ -53,11 +59,9 @@ describe("fetchActiveMarkets", () => {
       outcomePrices: ["0.5", "0.5"],
       volume: "1000",
     }))
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(createMockResponse(markets))
+    const mockFetch = vi.fn().mockResolvedValue(createMockResponse(markets))
 
-    const result = await fetchActiveMarkets(5, mockFetch)
+    await fetchActiveMarkets(5, mockFetch)
 
     // API handles limit via query param; we pass through
     expect(mockFetch).toHaveBeenCalledOnce()
@@ -67,9 +71,7 @@ describe("fetchActiveMarkets", () => {
   })
 
   it("returns empty array on fetch failure", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockRejectedValue(new Error("Network error"))
+    const mockFetch = vi.fn().mockRejectedValue(new Error("Network error"))
 
     const result = await fetchActiveMarkets(10, mockFetch)
 
@@ -85,5 +87,34 @@ describe("fetchActiveMarkets", () => {
     const result = await fetchActiveMarkets(10, mockFetch)
 
     expect(result).toEqual([])
+  })
+
+  it("normalizes partial upstream items to stable defaults", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      createMockResponse([
+        {
+          id: "m2",
+          question: "Incomplete market",
+          outcomes: undefined,
+          outcomePrices: undefined,
+          volume: undefined,
+          liquidity: undefined,
+        },
+      ])
+    )
+
+    const result = await fetchActiveMarkets(10, mockFetch)
+
+    expect(result).toEqual<PredictionMarket[]>([
+      {
+        id: "m2",
+        question: "Incomplete market",
+        slug: "",
+        outcomes: [],
+        outcomePrices: [],
+        volume: "0",
+        liquidity: "0",
+      },
+    ])
   })
 })

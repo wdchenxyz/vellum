@@ -2,6 +2,13 @@ import { memo } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import type { ValuedHolding } from "@/lib/portfolio/holdings"
+import {
+  buildAccountSummaries,
+  getAccountSummaryStatus,
+  getAccountSummaryValueMetrics,
+  getTotalSummaryStatus,
+  getTotalSummaryValues,
+} from "@/lib/portfolio/summary-cards"
 import type { FxRateSnapshot } from "@/lib/portfolio/schema"
 import { TrendingDown, TrendingUp } from "lucide-react"
 
@@ -51,153 +58,6 @@ function getProfitColor(value: number | null) {
   }
 
   return value >= 0 ? "var(--color-chart-3)" : "var(--color-destructive)"
-}
-
-function convertUsdToTwd(value: number, fxSnapshot: FxRateSnapshot | null) {
-  if (!fxSnapshot) {
-    return null
-  }
-
-  return value * fxSnapshot.rate
-}
-
-type SummaryTotals = {
-  convertibleCostTwd: number
-  convertibleMarketTwd: number
-  holdingCount: number
-  missingMarketCount: number
-  needsFxCount: number
-}
-
-function summarizeInTwd(
-  holdings: ValuedHolding[],
-  fxSnapshot: FxRateSnapshot | null
-): SummaryTotals {
-  return holdings.reduce<SummaryTotals>(
-    (summary, holding) => {
-      summary.holdingCount += 1
-
-      // Skip both cost and market value when market data is missing so
-      // the change calculation isn't skewed by orphaned cost entries.
-      if (holding.marketValue === null) {
-        summary.missingMarketCount += 1
-        return summary
-      }
-
-      const costTwd =
-        holding.currency === "TWD"
-          ? holding.totalCostOpen
-          : convertUsdToTwd(holding.totalCostOpen, fxSnapshot)
-
-      if (costTwd !== null) {
-        summary.convertibleCostTwd += costTwd
-      } else if (holding.currency === "USD") {
-        summary.needsFxCount += 1
-      }
-
-      const marketTwd =
-        holding.currency === "TWD"
-          ? holding.marketValue
-          : convertUsdToTwd(holding.marketValue, fxSnapshot)
-
-      if (marketTwd !== null) {
-        summary.convertibleMarketTwd += marketTwd
-      } else if (holding.currency === "USD") {
-        summary.needsFxCount += 1
-      }
-
-      return summary
-    },
-    {
-      convertibleCostTwd: 0,
-      convertibleMarketTwd: 0,
-      holdingCount: 0,
-      missingMarketCount: 0,
-      needsFxCount: 0,
-    }
-  )
-}
-
-type AccountSummary = {
-  account: string
-  cost: number | null
-  currencies: string[]
-  displayCurrency: string
-  holdingCount: number
-  marketValue: number | null
-  marketValueTwd: number | null
-  missingMarketCount: number
-  needsFxCount: number
-}
-
-function buildAccountSummaries(
-  holdings: ValuedHolding[],
-  fxSnapshot: FxRateSnapshot | null
-) {
-  const grouped = new Map<string, ValuedHolding[]>()
-
-  for (const holding of holdings) {
-    const key = holding.account ?? "Unassigned account"
-    const group = grouped.get(key) ?? []
-    group.push(holding)
-    grouped.set(key, group)
-  }
-
-  return [...grouped.entries()]
-    .map<AccountSummary>(([account, accountHoldings]) => {
-      const currencies = [
-        ...new Set(accountHoldings.map((holding) => holding.currency)),
-      ].sort()
-      const singleCurrency = currencies.length === 1 ? currencies[0] : null
-      const twdTotals = summarizeInTwd(accountHoldings, fxSnapshot)
-
-      if (!singleCurrency) {
-        return {
-          account,
-          cost: null,
-          currencies,
-          displayCurrency: "TWD",
-          holdingCount: twdTotals.holdingCount,
-          marketValue: null,
-          marketValueTwd: twdTotals.convertibleMarketTwd,
-          missingMarketCount: twdTotals.missingMarketCount,
-          needsFxCount: twdTotals.needsFxCount,
-        }
-      }
-
-      const missingMarketCount = accountHoldings.filter(
-        (holding) => holding.marketValue === null
-      ).length
-      const nativeCost = accountHoldings.reduce(
-        (sum, holding) => sum + holding.totalCostOpen,
-        0
-      )
-      const nativeMarketValue = accountHoldings.reduce(
-        (sum, holding) => sum + (holding.marketValue ?? 0),
-        0
-      )
-
-      return {
-        account,
-        cost: nativeCost,
-        currencies,
-        displayCurrency: singleCurrency,
-        holdingCount: accountHoldings.length,
-        marketValue: nativeMarketValue,
-        marketValueTwd:
-          singleCurrency === "USD"
-            ? convertUsdToTwd(nativeMarketValue, fxSnapshot)
-            : nativeMarketValue,
-        missingMarketCount,
-        needsFxCount: singleCurrency === "USD" && !fxSnapshot ? 1 : 0,
-      }
-    })
-    .sort((left, right) => {
-      const leftComparable = left.marketValueTwd ?? left.marketValue ?? 0
-      const rightComparable = right.marketValueTwd ?? right.marketValue ?? 0
-
-      return rightComparable - leftComparable
-    })
 }
 
 function getChangeMetrics({
@@ -275,12 +135,14 @@ export const PortfolioSummaryCards = memo(function PortfolioSummaryCards({
     return null
   }
 
-  const totalTwd = summarizeInTwd(holdings, fxSnapshot)
-  const totalNeedsFx =
-    holdings.some((holding) => holding.currency === "USD") && !fxSnapshot
+  const { totalCostTwd, totalMarketValueTwd, totals } = getTotalSummaryValues(
+    holdings,
+    fxSnapshot
+  )
+  const totalStatus = getTotalSummaryStatus(holdings, fxSnapshot)
   const totalChange = getChangeMetrics({
-    cost: totalNeedsFx ? null : totalTwd.convertibleCostTwd,
-    marketValue: totalNeedsFx ? null : totalTwd.convertibleMarketTwd,
+    cost: totalCostTwd,
+    marketValue: totalMarketValueTwd,
   })
   const accountSummaries = buildAccountSummaries(holdings, fxSnapshot)
 
@@ -294,15 +156,11 @@ export const PortfolioSummaryCards = memo(function PortfolioSummaryCards({
             className="h-auto rounded-full px-2 py-0.5 text-[11px]"
             variant="outline"
           >
-            {getCoverageBadge(totalTwd)}
+            {getCoverageBadge(totals)}
           </Badge>
         </div>
         <p className="text-4xl font-semibold tracking-tight text-foreground">
-          {formatMoney(
-            totalNeedsFx ? null : totalTwd.convertibleMarketTwd,
-            "TWD",
-            { integers: true }
-          )}
+          {formatMoney(totalMarketValueTwd, "TWD", { integers: true })}
         </p>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span
@@ -314,24 +172,24 @@ export const PortfolioSummaryCards = memo(function PortfolioSummaryCards({
           <ChangeRatioBadge value={totalChange.ratio} />
         </div>
         <p className="text-xs text-muted-foreground">
-          {fxSnapshot
+          {totalStatus === "ready" && fxSnapshot
             ? `USD/TWD ${fxSnapshot.rate.toFixed(2)}`
-            : "FX rate pending"}
+            : totalStatus === "fx-pending"
+              ? "FX rate pending"
+              : totalStatus === "price-pending"
+                ? "Market price pending"
+                : "TWD holdings"}
         </p>
       </div>
 
       {/* Account cards row */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {accountSummaries.map((summary) => {
-          const twdValue = summary.marketValueTwd
-          const twdCost =
-            summary.displayCurrency === "USD"
-              ? convertUsdToTwd(summary.cost ?? 0, fxSnapshot)
-              : summary.cost
-          const twdChange = getChangeMetrics({
-            cost: twdCost,
-            marketValue: twdValue,
-          })
+          const accountStatus = getAccountSummaryStatus(summary)
+          const valueMetrics = getAccountSummaryValueMetrics(
+            summary,
+            fxSnapshot
+          )
 
           return (
             <div
@@ -350,22 +208,35 @@ export const PortfolioSummaryCards = memo(function PortfolioSummaryCards({
                 </Badge>
               </div>
               <p className="text-3xl font-semibold tracking-tight text-foreground">
-                {formatMoney(twdValue, "TWD", { integers: true })}
+                {formatMoney(valueMetrics.marketValueTwd, "TWD", {
+                  integers: true,
+                })}
               </p>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
                   className="text-sm font-medium"
-                  style={{ color: getProfitColor(twdChange.amount) }}
+                  style={{
+                    color: getProfitColor(valueMetrics.changeAmountTwd),
+                  }}
                 >
-                  {formatMoney(twdChange.amount, "TWD", { integers: true })}
+                  {formatMoney(valueMetrics.changeAmountTwd, "TWD", {
+                    integers: true,
+                  })}
                 </span>
-                <ChangeRatioBadge value={twdChange.ratio} />
+                <ChangeRatioBadge value={valueMetrics.changeRatio} />
               </div>
               <p className="text-xs text-muted-foreground">
-                {summary.displayCurrency === "USD" &&
-                summary.marketValue !== null
-                  ? `${formatMoney(summary.marketValue, "USD")} · ${summary.currencies[0]}`
-                  : `${summary.currencies.join(" / ")} holdings`}
+                {accountStatus === "price-pending"
+                  ? "Market price pending"
+                  : accountStatus === "fx-pending"
+                    ? summary.displayCurrency === "USD" &&
+                      summary.marketValue !== null
+                      ? `${formatMoney(summary.marketValue, "USD")} · FX rate pending`
+                      : "FX rate pending"
+                    : summary.displayCurrency === "USD" &&
+                        summary.marketValue !== null
+                      ? `${formatMoney(summary.marketValue, "USD")} · ${summary.currencies[0]}`
+                      : `${summary.currencies.join(" / ")} holdings`}
               </p>
             </div>
           )

@@ -4,6 +4,11 @@ import { memo, useMemo, useState } from "react"
 
 import { type PortfolioHoldingGroup } from "@/lib/portfolio/holdings"
 import type { FxRateSnapshot, SupportedMarket } from "@/lib/portfolio/schema"
+import {
+  buildAccountSummaries,
+  getAccountSummaryStatus,
+  getAccountSummaryValueMetrics,
+} from "@/lib/portfolio/summary-cards"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   PortfolioWeightChart,
@@ -350,7 +355,25 @@ function getGroupSummary(
       : `${group.currencies.length} currencies`
 
   if (group.currencies.length !== 1) {
-    return `${holdingLabel} • ${currencyLabel}.`
+    const [summary] = buildAccountSummaries(group.holdings, fxSnapshot)
+
+    if (!summary) {
+      return `${holdingLabel} • ${currencyLabel}.`
+    }
+
+    const status = getAccountSummaryStatus(summary)
+
+    if (status === "price-pending") {
+      return `${holdingLabel} • ${currencyLabel} • market price pending.`
+    }
+
+    if (status === "fx-pending") {
+      return `${holdingLabel} • ${currencyLabel} • FX rate pending.`
+    }
+
+    const metrics = getAccountSummaryValueMetrics(summary, fxSnapshot)
+
+    return `${holdingLabel} • total value ${formatMoney(metrics.marketValueTwd, "TWD")}.`
   }
 
   if (group.totalMarketValue === null) {
@@ -368,6 +391,26 @@ function getGroupSummary(
   }
 
   return `${holdingLabel} • total value ${formatMoney(group.totalMarketValue, group.currencies[0])}.`
+}
+
+function getGroupTotalMetrics(
+  group: PortfolioHoldingGroup,
+  fxSnapshot: FxRateSnapshot | null
+) {
+  if (group.currencies.length === 1) {
+    return null
+  }
+
+  const [summary] = buildAccountSummaries(group.holdings, fxSnapshot)
+
+  if (!summary) {
+    return null
+  }
+
+  return {
+    metrics: getAccountSummaryValueMetrics(summary, fxSnapshot),
+    status: getAccountSummaryStatus(summary),
+  }
 }
 
 function getGroupAccentCurrency(group: PortfolioHoldingGroup) {
@@ -651,248 +694,295 @@ export const HoldingsTable = memo(function HoldingsTable({
               </div>
             ) : null}
 
-            {groups.map((group) => (
-              <section className="space-y-3" key={group.label}>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="size-2 rounded-full"
-                      style={{
-                        backgroundColor: getBucketDotColor(
-                          getGroupAccentCurrency(group)
-                        ),
-                      }}
-                    />
-                    <h3 className="text-base font-medium">{group.label}</h3>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {getGroupSummary(group, fxSnapshot)}
-                  </p>
-                </div>
+            {groups.map((group) => {
+              const totalMetrics = getGroupTotalMetrics(group, fxSnapshot)
 
-                <div
-                  className={`overflow-hidden rounded-lg border ${getBucketSurfaceClasses(getGroupAccentCurrency(group)).surface}`}
-                >
-                  <div className="space-y-3 p-3 md:hidden">
-                    {group.holdings.map((holding) => (
-                      <HoldingSummaryCard key={holding.key} holding={holding} />
-                    ))}
+              return (
+                <section className="space-y-3" key={group.label}>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="size-2 rounded-full"
+                        style={{
+                          backgroundColor: getBucketDotColor(
+                            getGroupAccentCurrency(group)
+                          ),
+                        }}
+                      />
+                      <h3 className="text-base font-medium">{group.label}</h3>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {getGroupSummary(group, fxSnapshot)}
+                    </p>
                   </div>
 
-                  <div className="hidden md:block">
-                    <Table className="min-w-[1360px] table-fixed">
-                      <TableHeader
-                        className={
-                          getBucketSurfaceClasses(getGroupAccentCurrency(group))
-                            .header
-                        }
-                      >
-                        <TableRow>
-                          <TableHead className="sticky left-0 z-30 min-w-[180px] border-r border-border/60 bg-background/95 shadow-[8px_0_18px_-14px_rgba(0,0,0,0.35)] backdrop-blur supports-[backdrop-filter]:bg-background/90">
-                            Ticker
-                          </TableHead>
-                          <TableHead className="w-[132px] text-right">
-                            P/L
-                          </TableHead>
-                          <TableHead className="w-[92px] text-right">
-                            P/L %
-                          </TableHead>
-                          <TableHead className="w-[92px] text-right">
-                            Weight
-                          </TableHead>
-                          <TableHead className="w-[132px] text-right">
-                            Value
-                          </TableHead>
-                          <TableHead className="text-right">
-                            Cost basis
-                          </TableHead>
-                          <TableHead className="w-[112px] text-right">
-                            Open qty
-                          </TableHead>
-                          <TableHead className="w-[132px] text-right">
-                            Avg cost
-                          </TableHead>
-                          <TableHead className="text-right">
-                            Prev close
-                          </TableHead>
-                          <TableHead className="min-w-[160px]">
-                            Account
-                          </TableHead>
-                          <TableHead className="w-[110px]">Market</TableHead>
-                          <TableHead className="w-[92px] text-right">
-                            Currency
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {group.holdings.map((holding) => {
-                          const label = getHoldingLabel(holding)
-                          const profitAmount = getProfitAmount(holding)
-                          const profitRatio = getProfitRatio(holding)
+                  <div
+                    className={`overflow-hidden rounded-lg border ${getBucketSurfaceClasses(getGroupAccentCurrency(group)).surface}`}
+                  >
+                    <div className="space-y-3 p-3 md:hidden">
+                      {group.holdings.map((holding) => (
+                        <HoldingSummaryCard
+                          key={holding.key}
+                          holding={holding}
+                        />
+                      ))}
+                    </div>
 
-                          return (
-                            <TableRow key={holding.key}>
-                              <TableCell className="sticky left-0 z-20 border-r border-border/50 bg-background/95 shadow-[8px_0_18px_-14px_rgba(0,0,0,0.28)] backdrop-blur supports-[backdrop-filter]:bg-background/90">
-                                <div className="flex min-w-0 flex-col gap-0.5">
-                                  <span className="font-medium">
-                                    {label.primary}
-                                  </span>
-                                  {label.secondary ? (
-                                    <span className="truncate text-xs text-muted-foreground">
-                                      {label.secondary}
+                    <div className="hidden md:block">
+                      <Table className="min-w-[1360px] table-fixed">
+                        <TableHeader
+                          className={
+                            getBucketSurfaceClasses(
+                              getGroupAccentCurrency(group)
+                            ).header
+                          }
+                        >
+                          <TableRow>
+                            <TableHead className="sticky left-0 z-30 min-w-[180px] border-r border-border/60 bg-background/95 shadow-[8px_0_18px_-14px_rgba(0,0,0,0.35)] backdrop-blur supports-[backdrop-filter]:bg-background/90">
+                              Ticker
+                            </TableHead>
+                            <TableHead className="w-[132px] text-right">
+                              P/L
+                            </TableHead>
+                            <TableHead className="w-[92px] text-right">
+                              P/L %
+                            </TableHead>
+                            <TableHead className="w-[92px] text-right">
+                              Weight
+                            </TableHead>
+                            <TableHead className="w-[132px] text-right">
+                              Value
+                            </TableHead>
+                            <TableHead className="text-right">
+                              Cost basis
+                            </TableHead>
+                            <TableHead className="w-[112px] text-right">
+                              Open qty
+                            </TableHead>
+                            <TableHead className="w-[132px] text-right">
+                              Avg cost
+                            </TableHead>
+                            <TableHead className="text-right">
+                              Prev close
+                            </TableHead>
+                            <TableHead className="min-w-[160px]">
+                              Account
+                            </TableHead>
+                            <TableHead className="w-[110px]">Market</TableHead>
+                            <TableHead className="w-[92px] text-right">
+                              Currency
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {group.holdings.map((holding) => {
+                            const label = getHoldingLabel(holding)
+                            const profitAmount = getProfitAmount(holding)
+                            const profitRatio = getProfitRatio(holding)
+
+                            return (
+                              <TableRow key={holding.key}>
+                                <TableCell className="sticky left-0 z-20 border-r border-border/50 bg-background/95 shadow-[8px_0_18px_-14px_rgba(0,0,0,0.28)] backdrop-blur supports-[backdrop-filter]:bg-background/90">
+                                  <div className="flex min-w-0 flex-col gap-0.5">
+                                    <span className="font-medium">
+                                      {label.primary}
                                     </span>
-                                  ) : null}
-                                </div>
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={{ color: getProfitColor(profitAmount) }}
-                              >
-                                {formatMoney(profitAmount, holding.currency)}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums"
-                                style={{ color: getProfitColor(profitAmount) }}
-                              >
-                                {formatPercent(profitRatio)}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatPercent(holding.weight)}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatMoney(
-                                  holding.marketValue,
-                                  holding.currency
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatMoney(
-                                  holding.totalCostOpen,
-                                  holding.currency
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatQuantity(holding.quantityOpen)}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {formatMoney(
-                                  holding.averageCost,
-                                  holding.currency
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span>
-                                    {formatMoney(
-                                      holding.previousClose,
-                                      holding.currency
-                                    )}
+                                    {label.secondary ? (
+                                      <span className="truncate text-xs text-muted-foreground">
+                                        {label.secondary}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </TableCell>
+                                <TableCell
+                                  className="text-right tabular-nums"
+                                  style={{
+                                    color: getProfitColor(profitAmount),
+                                  }}
+                                >
+                                  {formatMoney(profitAmount, holding.currency)}
+                                </TableCell>
+                                <TableCell
+                                  className="text-right tabular-nums"
+                                  style={{
+                                    color: getProfitColor(profitAmount),
+                                  }}
+                                >
+                                  {formatPercent(profitRatio)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatPercent(holding.weight)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatMoney(
+                                    holding.marketValue,
+                                    holding.currency
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatMoney(
+                                    holding.totalCostOpen,
+                                    holding.currency
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatQuantity(holding.quantityOpen)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatMoney(
+                                    holding.averageCost,
+                                    holding.currency
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  <div className="flex flex-col items-end gap-0.5">
+                                    <span>
+                                      {formatMoney(
+                                        holding.previousClose,
+                                        holding.currency
+                                      )}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {holding.previousCloseDate ??
+                                        holding.quoteError ??
+                                        "-"}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <span className="text-sm text-foreground">
+                                    {holding.account ?? "-"}
                                   </span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {holding.previousCloseDate ??
-                                      holding.quoteError ??
-                                      "-"}
-                                  </span>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <span className="text-sm text-foreground">
-                                  {holding.account ?? "-"}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex min-w-0 flex-col gap-0.5">
-                                  <span className="font-medium">
-                                    {holding.market}
-                                  </span>
-                                  <span className="truncate text-xs text-muted-foreground">
-                                    {holding.exchange ?? "Exchange pending"}
-                                  </span>
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-right font-medium tabular-nums">
-                                {holding.currency}
-                              </TableCell>
-                            </TableRow>
-                          )
-                        })}
-                      </TableBody>
-                      <TableFooter>
-                        <TableRow>
-                          <TableCell className="font-medium">Total</TableCell>
-                          <TableCell
-                            className="text-right tabular-nums"
-                            style={{
-                              color:
-                                group.currencies.length === 1 &&
-                                group.totalMarketValue !== null &&
-                                group.totalCostOpen !== null
-                                  ? getProfitColor(
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex min-w-0 flex-col gap-0.5">
+                                    <span className="font-medium">
+                                      {holding.market}
+                                    </span>
+                                    <span className="truncate text-xs text-muted-foreground">
+                                      {holding.exchange ?? "Exchange pending"}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right font-medium tabular-nums">
+                                  {holding.currency}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                        <TableFooter>
+                          <TableRow>
+                            <TableCell className="font-medium">Total</TableCell>
+                            <TableCell
+                              className="text-right tabular-nums"
+                              style={{
+                                color:
+                                  totalMetrics?.status === "ready"
+                                    ? getProfitColor(
+                                        totalMetrics.metrics.changeAmountTwd
+                                      )
+                                    : group.currencies.length === 1 &&
+                                        group.totalMarketValue !== null &&
+                                        group.totalCostOpen !== null
+                                      ? getProfitColor(
+                                          group.totalMarketValue -
+                                            group.totalCostOpen
+                                        )
+                                      : undefined,
+                              }}
+                            >
+                              {totalMetrics
+                                ? totalMetrics.status === "ready"
+                                  ? formatMoney(
+                                      totalMetrics.metrics.changeAmountTwd,
+                                      "TWD"
+                                    )
+                                  : "-"
+                                : group.currencies.length === 1 &&
+                                    group.totalMarketValue !== null &&
+                                    group.totalCostOpen !== null
+                                  ? formatMoney(
                                       group.totalMarketValue -
+                                        group.totalCostOpen,
+                                      group.currencies[0]
+                                    )
+                                  : "-"}
+                            </TableCell>
+                            <TableCell
+                              className="text-right tabular-nums"
+                              style={{
+                                color:
+                                  totalMetrics?.status === "ready"
+                                    ? getProfitColor(
+                                        totalMetrics.metrics.changeAmountTwd
+                                      )
+                                    : group.currencies.length === 1 &&
+                                        group.totalMarketValue !== null &&
+                                        group.totalCostOpen !== null
+                                      ? getProfitColor(
+                                          group.totalMarketValue -
+                                            group.totalCostOpen
+                                        )
+                                      : undefined,
+                              }}
+                            >
+                              {totalMetrics
+                                ? totalMetrics.status === "ready"
+                                  ? formatPercent(
+                                      totalMetrics.metrics.changeRatio
+                                    )
+                                  : "-"
+                                : group.currencies.length === 1 &&
+                                    group.totalMarketValue !== null &&
+                                    group.totalCostOpen !== null &&
+                                    group.totalCostOpen > 0
+                                  ? formatPercent(
+                                      (group.totalMarketValue -
+                                        group.totalCostOpen) /
                                         group.totalCostOpen
                                     )
-                                  : undefined,
-                            }}
-                          >
-                            {group.currencies.length === 1 &&
-                            group.totalMarketValue !== null &&
-                            group.totalCostOpen !== null
-                              ? formatMoney(
-                                  group.totalMarketValue - group.totalCostOpen,
-                                  group.currencies[0]
-                                )
-                              : "-"}
-                          </TableCell>
-                          <TableCell
-                            className="text-right tabular-nums"
-                            style={{
-                              color:
-                                group.currencies.length === 1 &&
-                                group.totalMarketValue !== null &&
-                                group.totalCostOpen !== null
-                                  ? getProfitColor(
-                                      group.totalMarketValue -
-                                        group.totalCostOpen
+                                  : "-"}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {(totalMetrics?.status === "ready" ||
+                                group.totalMarketValue !== null) &&
+                              (totalMetrics || group.currencies.length === 1)
+                                ? "100.00%"
+                                : "-"}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {totalMetrics
+                                ? totalMetrics.status === "ready"
+                                  ? formatMoney(
+                                      totalMetrics.metrics.marketValueTwd,
+                                      "TWD"
                                     )
-                                  : undefined,
-                            }}
-                          >
-                            {group.currencies.length === 1 &&
-                            group.totalMarketValue !== null &&
-                            group.totalCostOpen !== null &&
-                            group.totalCostOpen > 0
-                              ? formatPercent(
-                                  (group.totalMarketValue -
-                                    group.totalCostOpen) /
-                                    group.totalCostOpen
-                                )
-                              : "-"}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {group.totalMarketValue === null ? "-" : "100.00%"}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(
-                              group.totalMarketValue,
-                              group.currencies[0] ?? "USD"
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {group.currencies.length === 1
-                              ? formatMoney(
-                                  group.totalCostOpen,
-                                  group.currencies[0]
-                                )
-                              : "-"}
-                          </TableCell>
-                          <TableCell colSpan={6} />
-                        </TableRow>
-                      </TableFooter>
-                    </Table>
+                                  : "-"
+                                : formatMoney(
+                                    group.totalMarketValue,
+                                    group.currencies[0] ?? "USD"
+                                  )}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {totalMetrics
+                                ? formatMoney(totalMetrics.metrics.costTwd, "TWD")
+                                : group.currencies.length === 1
+                                  ? formatMoney(
+                                      group.totalCostOpen,
+                                      group.currencies[0]
+                                    )
+                                  : "-"}
+                            </TableCell>
+                            <TableCell colSpan={6} />
+                          </TableRow>
+                        </TableFooter>
+                      </Table>
+                    </div>
                   </div>
-                </div>
-              </section>
-            ))}
+                </section>
+              )
+            })}
           </div>
         </div>
       </details>

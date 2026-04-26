@@ -48,6 +48,10 @@ function getBaseCurrency(activeBuckets: PortfolioWeightBucket[]) {
   return "TWD"
 }
 
+function normalizeActiveBuckets(activeBuckets: PortfolioWeightBucket[]) {
+  return activeBuckets.length > 0 ? activeBuckets : ["TWD", "USD"]
+}
+
 function convertMarketValue({
   baseCurrency,
   bucket,
@@ -82,6 +86,144 @@ function convertMarketValue({
   return null
 }
 
+function requiresFxRate({
+  baseCurrency,
+  buckets,
+  holdings,
+}: {
+  baseCurrency: PortfolioWeightBucket
+  buckets?: PortfolioWeightBucket[]
+  holdings: PortfolioWeightChartBarInput[]
+}) {
+  return holdings.some(
+    (holding) =>
+      holding.bucket !== baseCurrency &&
+      (!buckets || buckets.includes(holding.bucket))
+  )
+}
+
+function buildBarComputation({
+  baseCurrency,
+  holding,
+  isActive,
+  usdTwdRate,
+}: {
+  baseCurrency: PortfolioWeightBucket
+  holding: PortfolioWeightChartBarInput
+  isActive: boolean
+  usdTwdRate: number | null
+}): PortfolioWeightChartComputation {
+  const convertedCostBasis = convertMarketValue({
+    baseCurrency,
+    bucket: holding.bucket,
+    marketValue: holding.costBasis,
+    usdTwdRate,
+  })
+  const convertedMarketValue = convertMarketValue({
+    baseCurrency,
+    bucket: holding.bucket,
+    marketValue: holding.marketValue,
+    usdTwdRate,
+  })
+  const unrealizedAmount =
+    convertedCostBasis !== null && convertedMarketValue !== null
+      ? roundNumber(convertedMarketValue - convertedCostBasis)
+      : null
+
+  return {
+    activeWeight: null,
+    allWeight: null,
+    convertedCostBasis,
+    convertedMarketValue,
+    costWeight: null,
+    displayWeight: null,
+    isUnderwater: unrealizedAmount !== null && unrealizedAmount < 0,
+    isActive,
+    key: holding.key,
+    profitWeight: null,
+    unrealizedAmount,
+  }
+}
+
+function sumMarketValues(
+  bars: PortfolioWeightChartComputation[],
+  predicate: (bar: PortfolioWeightChartComputation) => boolean
+) {
+  return roundNumber(
+    bars.reduce(
+      (sum, bar) =>
+        predicate(bar) ? sum + (bar.convertedMarketValue ?? 0) : sum,
+      0
+    )
+  )
+}
+
+function calculateWeight({
+  denominator,
+  marketValue,
+}: {
+  denominator: number
+  marketValue: number | null
+}) {
+  if (marketValue === null || denominator <= 0) {
+    return null
+  }
+
+  return roundNumber(marketValue / denominator, 6)
+}
+
+function assignSegmentWeights({
+  activeMarketValueTotal,
+  allMarketValueTotal,
+  bar,
+  needsFxRateForActive,
+  needsFxRateForAll,
+}: {
+  activeMarketValueTotal: number
+  allMarketValueTotal: number
+  bar: PortfolioWeightChartComputation
+  needsFxRateForActive: boolean
+  needsFxRateForAll: boolean
+}) {
+  if (!needsFxRateForAll) {
+    bar.allWeight = calculateWeight({
+      denominator: allMarketValueTotal,
+      marketValue: bar.convertedMarketValue,
+    })
+  }
+
+  if (!needsFxRateForActive && bar.isActive) {
+    bar.activeWeight = calculateWeight({
+      denominator: activeMarketValueTotal,
+      marketValue: bar.convertedMarketValue,
+    })
+  }
+
+  bar.displayWeight = bar.isActive ? bar.activeWeight : bar.allWeight
+
+  const segmentDenominator = bar.isActive
+    ? activeMarketValueTotal
+    : allMarketValueTotal
+
+  if (
+    bar.displayWeight === null ||
+    bar.convertedMarketValue === null ||
+    bar.convertedCostBasis === null ||
+    segmentDenominator <= 0
+  ) {
+    return
+  }
+
+  const costAmount = Math.min(bar.convertedCostBasis, bar.convertedMarketValue)
+  const profitAmount = Math.max(
+    bar.convertedMarketValue - bar.convertedCostBasis,
+    0
+  )
+
+  bar.costWeight = roundNumber(costAmount / segmentDenominator, 6)
+  bar.profitWeight = roundNumber(profitAmount / segmentDenominator, 6)
+}
+
 export function buildPortfolioWeightChartSummary({
   activeBuckets,
   holdings,
@@ -91,109 +233,40 @@ export function buildPortfolioWeightChartSummary({
   holdings: PortfolioWeightChartBarInput[]
   usdTwdRate: number | null
 }): PortfolioWeightChartSummary {
-  const normalizedActiveBuckets: PortfolioWeightBucket[] =
-    activeBuckets.length > 0 ? activeBuckets : ["TWD", "USD"]
+  const normalizedActiveBuckets = normalizeActiveBuckets(activeBuckets)
   const baseCurrency = getBaseCurrency(normalizedActiveBuckets)
   const needsFxRateForActive =
-    holdings.some(
-      (holding) =>
-        normalizedActiveBuckets.includes(holding.bucket) &&
-        holding.bucket !== baseCurrency
-    ) && !usdTwdRate
+    requiresFxRate({
+      baseCurrency,
+      buckets: normalizedActiveBuckets,
+      holdings,
+    }) && !usdTwdRate
   const needsFxRateForAll =
-    holdings.some((holding) => holding.bucket !== baseCurrency) && !usdTwdRate
-
-  const bars = holdings.map<PortfolioWeightChartComputation>((holding) => {
-    const convertedCostBasis = convertMarketValue({
+    requiresFxRate({
       baseCurrency,
-      bucket: holding.bucket,
-      marketValue: holding.costBasis,
-      usdTwdRate,
-    })
-    const convertedMarketValue = convertMarketValue({
-      baseCurrency,
-      bucket: holding.bucket,
-      marketValue: holding.marketValue,
-      usdTwdRate,
-    })
-    const unrealizedAmount =
-      convertedCostBasis !== null && convertedMarketValue !== null
-        ? roundNumber(convertedMarketValue - convertedCostBasis)
-        : null
+      holdings,
+    }) && !usdTwdRate
 
-    return {
-      activeWeight: null,
-      allWeight: null,
-      convertedCostBasis,
-      convertedMarketValue,
-      costWeight: null,
-      displayWeight: null,
-      isUnderwater: unrealizedAmount !== null && unrealizedAmount < 0,
+  const bars = holdings.map((holding) =>
+    buildBarComputation({
+      baseCurrency,
+      holding,
       isActive: normalizedActiveBuckets.includes(holding.bucket),
-      key: holding.key,
-      profitWeight: null,
-      unrealizedAmount,
-    }
-  })
+      usdTwdRate,
+    })
+  )
 
-  const allMarketValueTotal = roundNumber(
-    bars.reduce((sum, bar) => sum + (bar.convertedMarketValue ?? 0), 0)
-  )
-  const activeMarketValueTotal = roundNumber(
-    bars.reduce(
-      (sum, bar) => sum + (bar.isActive ? (bar.convertedMarketValue ?? 0) : 0),
-      0
-    )
-  )
+  const allMarketValueTotal = sumMarketValues(bars, () => true)
+  const activeMarketValueTotal = sumMarketValues(bars, (bar) => bar.isActive)
 
   for (const bar of bars) {
-    if (
-      !needsFxRateForAll &&
-      bar.convertedMarketValue !== null &&
-      allMarketValueTotal > 0
-    ) {
-      bar.allWeight = roundNumber(
-        bar.convertedMarketValue / allMarketValueTotal,
-        6
-      )
-    }
-
-    if (
-      !needsFxRateForActive &&
-      bar.isActive &&
-      bar.convertedMarketValue !== null &&
-      activeMarketValueTotal > 0
-    ) {
-      bar.activeWeight = roundNumber(
-        bar.convertedMarketValue / activeMarketValueTotal,
-        6
-      )
-    }
-
-    bar.displayWeight = bar.isActive ? bar.activeWeight : bar.allWeight
-
-    const segmentDenominator = bar.isActive
-      ? activeMarketValueTotal
-      : allMarketValueTotal
-
-    if (
-      bar.displayWeight !== null &&
-      bar.convertedMarketValue !== null &&
-      bar.convertedCostBasis !== null &&
-      segmentDenominator > 0
-    ) {
-      const costAmount = Math.min(
-        bar.convertedCostBasis,
-        bar.convertedMarketValue
-      )
-      const profitAmount = Math.max(
-        bar.convertedMarketValue - bar.convertedCostBasis,
-        0
-      )
-
-      bar.costWeight = roundNumber(costAmount / segmentDenominator, 6)
-      bar.profitWeight = roundNumber(profitAmount / segmentDenominator, 6)
-    }
+    assignSegmentWeights({
+      activeMarketValueTotal,
+      allMarketValueTotal,
+      bar,
+      needsFxRateForActive,
+      needsFxRateForAll,
+    })
   }
 
   return {

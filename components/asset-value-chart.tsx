@@ -264,7 +264,7 @@ function ChartPointTooltip({
 
 type AssetValueChartProps = {
   benchmarks: BenchmarkSeries
-  costBasisTwd: number
+  costBasisTwd: number | null
   error: string | null
   series: DailyValuePoint[]
   status: "idle" | "loading" | "ready" | "error"
@@ -311,12 +311,20 @@ export const AssetValueChart = memo(function AssetValueChart({
 
     const last = filteredSeries[filteredSeries.length - 1].value
 
-    // For "All" view, use cost basis (matches the total asset card).
-    // For other views, use the first visible data point.
-    const base =
-      range === "all" && costBasisTwd > 0
-        ? costBasisTwd
-        : filteredSeries[0].value
+    let base: number | null
+
+    if (range === "all") {
+      // Match the summary cards: when spot FX is missing, the all-time net
+      // change should stay pending instead of using the first market value.
+      base = costBasisTwd
+    } else {
+      base = filteredSeries[0].value
+    }
+
+    if (base === null) {
+      return null
+    }
+
     const amount = last - base
     const ratio = base > 0 ? amount / base : null
 
@@ -352,7 +360,9 @@ export const AssetValueChart = memo(function AssetValueChart({
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Daily total asset value in TWD
+              {range === "all" && costBasisTwd === null
+                ? "Net change pending FX rate"
+                : "Daily total asset value in TWD"}
             </p>
           )}
         </div>
