@@ -22,6 +22,8 @@
 .DS_Store
 *.pem
 data/transactions.json
+data/transactions.sqlite
+data/transactions.sqlite-*
 data/quote-cache.json
 
 # debug
