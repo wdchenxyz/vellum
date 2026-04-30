@@ -590,25 +590,24 @@ function AllocationPanel({
 
   return (
     <div className="rounded-lg border border-border/70 bg-card p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="grid min-w-0 flex-1 gap-2">
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <p className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
             Total portfolio value
           </p>
-          <div className="text-4xl font-semibold tracking-tight text-foreground tabular-nums sm:text-5xl">
-            {formatUsd(snapshot.totalUsd)}
+          <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
+            {dateLabel ? <Badge variant="outline">Prices {dateLabel}</Badge> : null}
+            {fxLabel ? <Badge variant="outline">FX {fxLabel}</Badge> : null}
           </div>
-          <p className="hidden text-xs text-muted-foreground sm:block">
-            {snapshot.isComplete
-              ? `Long effective exposure ${formatUsd(effectiveLongTotal)}.`
-              : "Partial USD value from available market data."}
-          </p>
         </div>
-
-        <div className="flex w-full flex-wrap justify-start gap-2 sm:w-auto sm:justify-end">
-          {dateLabel ? <Badge variant="outline">Prices {dateLabel}</Badge> : null}
-          {fxLabel ? <Badge variant="outline">FX {fxLabel}</Badge> : null}
+        <div className="text-4xl font-semibold tracking-tight text-foreground tabular-nums sm:text-5xl">
+          {formatUsd(snapshot.totalUsd)}
         </div>
+        <p className="hidden text-xs text-muted-foreground sm:block">
+          {snapshot.isComplete
+            ? `Long effective exposure ${formatUsd(effectiveLongTotal)}.`
+            : "Partial USD value from available market data."}
+        </p>
       </div>
 
       <div className="mt-5 grid items-center gap-5 lg:grid-cols-[minmax(15rem,1fr)_minmax(10rem,0.55fr)]">
