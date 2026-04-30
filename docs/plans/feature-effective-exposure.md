@@ -103,6 +103,31 @@ External reference: https://github.com/twelvedata/twelvedata-node
 - Apply non-`1x` exposure only when an instrument profile is reviewed or explicitly trusted.
 - When a held ticker has no reviewed profile, use `1x` for calculations but surface a clear review prompt rather than silently implying the effective exposure is confirmed.
 
+## Post-Extraction Ticker Resolution Strategy
+
+Some confirmations show a truncated security name without the ticker, for example `GraniteShares 2x Long NVDA Dai` instead of `NVDL`. Twelve Data `/symbol_search` can validate known ticker candidates, but it is not reliable enough to fuzzy-search every truncated fund name directly.
+
+Use a conservative post-extraction resolver:
+
+- Keep the initial extraction grounded in visible facts.
+  - Extract visible security name separately from ticker.
+  - Use a visible ticker directly when it appears.
+  - If no ticker is visible, do not store the visible name as the final ticker without resolution.
+- Ask the LLM for a small ranked list of ticker candidates from the visible security name.
+  - Example: visible name `GraniteShares 2x Long NVDA Dai` may produce candidate `NVDL`.
+  - Return candidates with a short reason and confidence, but do not treat confidence as proof.
+- Validate candidates in server code with Twelve Data.
+  - Query `/symbol_search` by candidate ticker, not only by truncated name.
+  - Require an exact symbol match.
+  - Require expected market/country and currency when available.
+  - Compare returned `instrument_name` tokens against the visible name, such as issuer, leverage, direction, underlying, and daily/ETF terms.
+- Accept only one high-confidence validated candidate.
+  - Store the resolved ticker, and optionally retain the visible security name as supporting evidence.
+  - If multiple candidates pass or no candidate passes, mark the trade unresolved for user review.
+- Do not run an open-ended retry loop.
+  - A second LLM pass can be used only to produce a bounded candidate list.
+  - Validation failure should stop at review instead of repeatedly asking the model to guess again.
+
 ## Proposed Implementation Plan
 
 - [ ] Create a SQLite-backed `instrument_exposure_profiles` table.
@@ -128,6 +153,12 @@ External reference: https://github.com/twelvedata/twelvedata-node
 - [ ] Add API routes for exposure profiles.
   - `GET /api/portfolio/exposure-profiles` for profiles relevant to current holdings or all known profiles.
   - `PUT /api/portfolio/exposure-profiles` for user edits and reviewed overrides.
+- [ ] Add post-extraction ticker resolution for confirmations that show only a security name.
+  - Extend extraction output with a visible `securityName` or equivalent evidence field.
+  - Let the LLM propose a bounded list of ticker candidates only when no visible ticker is present.
+  - Validate candidate tickers through Twelve Data in server code.
+  - Store a resolved ticker only when validation produces a single high-confidence match.
+  - Surface unresolved or ambiguous matches for user review instead of guessing.
 - [ ] Update `components/portfolio-snapshot.tsx` to load exposure profiles alongside quotes and FX.
 - [ ] Update `buildCurrentPortfolioSnapshot` to consume exposure profiles instead of a local hardcoded multiplier map.
 - [ ] Default chart behavior for MVP:

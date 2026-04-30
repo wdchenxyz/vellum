@@ -4,6 +4,7 @@ import {
   buildCurrentPortfolioSnapshot,
   convertMarketValueToUsd,
 } from "@/lib/portfolio/current-snapshot"
+import type { InstrumentExposureProfile } from "@/lib/portfolio/exposure-profiles"
 import type { ValuedHolding } from "@/lib/portfolio/holdings"
 import type { FxRateSnapshot } from "@/lib/portfolio/schema"
 
@@ -11,6 +12,21 @@ const fxSnapshot: FxRateSnapshot = {
   asOf: "2026-04-29",
   pair: "USD/TWD",
   rate: 31,
+}
+
+const amdlProfile: InstrumentExposureProfile = {
+  createdAt: "2026-04-29 00:00:00",
+  exposureDirection: "long",
+  exposureMultiplier: 2,
+  instrumentName: "GraniteShares 2x Long AMD Daily ETF",
+  market: "US",
+  notes: null,
+  reviewStatus: "reviewed",
+  source: "test",
+  ticker: "AMDL",
+  underlyingMarket: "US",
+  underlyingTicker: "AMD",
+  updatedAt: "2026-04-29 00:00:00",
 }
 
 function makeHolding(overrides: Partial<ValuedHolding>): ValuedHolding {
@@ -86,6 +102,7 @@ describe("buildCurrentPortfolioSnapshot", () => {
 
   it("weights leveraged ETFs by their effective exposure", () => {
     const snapshot = buildCurrentPortfolioSnapshot({
+      exposureProfiles: [amdlProfile],
       fxSnapshot,
       holdings: [
         makeHolding({
@@ -107,6 +124,18 @@ describe("buildCurrentPortfolioSnapshot", () => {
 
     expect(snapshot.totalUsd).toBe(1500)
     expect(snapshot.effectiveTotalUsd).toBe(2500)
+    expect(snapshot.exposureGroups).toEqual([
+      {
+        effectiveValueUsd: 2500,
+        fillKey: "US:AMDL",
+        holdings: ["AMD", "AMDL"],
+        key: "US:AMD",
+        market: "US",
+        marketValueUsd: 1500,
+        ticker: "AMD",
+        weight: 1,
+      },
+    ])
     expect(
       snapshot.holdings.map((holding) => ({
         effectiveMultiplier: holding.effectiveMultiplier,
@@ -133,6 +162,76 @@ describe("buildCurrentPortfolioSnapshot", () => {
     ])
   })
 
+  it("uses 1x for unreviewed profiles and surfaces a review issue", () => {
+    const snapshot = buildCurrentPortfolioSnapshot({
+      exposureProfiles: [
+        {
+          ...amdlProfile,
+          reviewStatus: "unreviewed",
+        },
+      ],
+      fxSnapshot,
+      holdings: [
+        makeHolding({
+          key: "US:AMDL",
+          marketValue: 1000,
+          quoteKey: "US:AMDL",
+          quoteTicker: "AMDL",
+          ticker: "AMDL",
+        }),
+      ],
+    })
+
+    expect(snapshot.effectiveTotalUsd).toBe(1000)
+    expect(snapshot.holdings[0]).toMatchObject({
+      effectiveMultiplier: 1,
+      exposureReviewStatus: "unreviewed",
+      exposureUnderlyingTicker: "AMD",
+    })
+    expect(snapshot.exposureIssues).toEqual([
+      {
+        key: "US:AMDL:review",
+        message:
+          "AMDL has an unreviewed exposure profile, so it is treated as direct 1x exposure.",
+        ticker: "AMDL",
+      },
+    ])
+  })
+
+  it("excludes inverse profiles from long exposure groups", () => {
+    const snapshot = buildCurrentPortfolioSnapshot({
+      exposureProfiles: [
+        {
+          ...amdlProfile,
+          exposureDirection: "inverse",
+          ticker: "SQQQ",
+          underlyingTicker: "QQQ",
+        },
+      ],
+      fxSnapshot,
+      holdings: [
+        makeHolding({
+          key: "US:SQQQ",
+          marketValue: 1000,
+          quoteKey: "US:SQQQ",
+          quoteTicker: "SQQQ",
+          ticker: "SQQQ",
+        }),
+      ],
+    })
+
+    expect(snapshot.effectiveTotalUsd).toBe(-2000)
+    expect(snapshot.exposureGroups).toEqual([])
+    expect(snapshot.exposureIssues).toEqual([
+      {
+        key: "US:SQQQ:inverse",
+        message:
+          "SQQQ is inverse exposure and is excluded from the long exposure donut.",
+        ticker: "SQQQ",
+      },
+    ])
+  })
+
   it("marks converted value incomplete when TWD holdings need FX", () => {
     const snapshot = buildCurrentPortfolioSnapshot({
       fxSnapshot: null,
@@ -154,4 +253,3 @@ describe("buildCurrentPortfolioSnapshot", () => {
     expect(snapshot.isComplete).toBe(false)
   })
 })
-

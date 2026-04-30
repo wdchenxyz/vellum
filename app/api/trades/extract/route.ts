@@ -11,9 +11,11 @@ import { extractTradesFromFile } from "@/lib/trades/extract"
 import {
   computeTradeTotalAmount,
   extractTradesRequestSchema,
+  type ExtractedTrade,
   type FileExtractionResult,
   type TradeTableRow,
 } from "@/lib/trades/schema"
+import { resolveExtractedTradeTicker } from "@/lib/trades/resolve-ticker"
 import { appendStoredTradeRows } from "@/lib/trades/storage"
 
 export const maxDuration = 60
@@ -57,6 +59,28 @@ function validateUploads(files: Array<{ mediaType: string; url: string }>) {
   return null
 }
 
+async function resolveTickerForResult(result: FileExtractionResult) {
+  const resolvedTrades: ExtractedTrade[] = []
+  const issues: string[] = []
+
+  for (const trade of result.trades) {
+    const resolution = await resolveExtractedTradeTicker({ trade })
+
+    if (resolution.status === "accepted") {
+      resolvedTrades.push(resolution.trade)
+      continue
+    }
+
+    issues.push(resolution.issue)
+  }
+
+  return {
+    ...result,
+    error: [result.error, ...issues].filter(Boolean).join(" ") || undefined,
+    trades: resolvedTrades,
+  }
+}
+
 export async function POST(request: Request) {
   let body: unknown
 
@@ -88,7 +112,9 @@ export async function POST(request: Request) {
 
   for (const file of parsed.data.files) {
     results.push(
-      await extractTradesFromFile({ file, prompt: parsed.data.prompt })
+      await resolveTickerForResult(
+        await extractTradesFromFile({ file, prompt: parsed.data.prompt })
+      )
     )
   }
 
