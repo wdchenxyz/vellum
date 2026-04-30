@@ -20,7 +20,6 @@ type StoredExposureProfileRecord = {
   instrument_name: string | null
   market: InstrumentExposureProfile["market"]
   notes: string | null
-  review_status: InstrumentExposureProfile["reviewStatus"]
   source: string | null
   ticker: string
   underlying_market: InstrumentExposureProfile["underlyingMarket"]
@@ -44,7 +43,7 @@ function createExposureProfileSchema(db: DatabaseSync) {
       exposure_multiplier REAL NOT NULL CHECK (exposure_multiplier > 0),
       exposure_direction TEXT NOT NULL CHECK (exposure_direction IN ('long', 'inverse')),
       source TEXT,
-      review_status TEXT NOT NULL CHECK (review_status IN ('reviewed', 'unreviewed')),
+      review_status TEXT NOT NULL DEFAULT 'reviewed',
       notes TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -66,7 +65,6 @@ function mapStoredExposureProfile(
     instrumentName: record.instrument_name,
     market: record.market,
     notes: record.notes,
-    reviewStatus: record.review_status,
     source: record.source,
     ticker: record.ticker,
     underlyingMarket: record.underlying_market,
@@ -131,7 +129,7 @@ function upsertProfile(
     normalized.exposureMultiplier,
     normalized.exposureDirection,
     normalized.source,
-    normalized.reviewStatus,
+    "reviewed",
     normalized.notes
   )
 }
@@ -179,7 +177,7 @@ function seedDefaultProfiles(db: DatabaseSync) {
         normalized.exposureMultiplier,
         normalized.exposureDirection,
         normalized.source,
-        normalized.reviewStatus,
+        "reviewed",
         normalized.notes
       )
     }
@@ -206,7 +204,6 @@ function readProfileFromDatabase(
         instrument_name,
         market,
         notes,
-        review_status,
         source,
         ticker,
         underlying_market,
@@ -238,7 +235,6 @@ function readProfilesFromDatabase(db: DatabaseSync) {
         instrument_name,
         market,
         notes,
-        review_status,
         source,
         ticker,
         underlying_market,
@@ -301,4 +297,3 @@ export async function upsertInstrumentExposureProfile(
     }
   })
 }
-

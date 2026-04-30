@@ -3,7 +3,6 @@ import { z } from "zod"
 import { supportedMarketSchema } from "@/lib/portfolio/schema"
 
 export const exposureDirectionSchema = z.enum(["long", "inverse"])
-export const exposureReviewStatusSchema = z.enum(["reviewed", "unreviewed"])
 
 export const instrumentExposureProfileSchema = z.object({
   createdAt: z.string().nullable().optional(),
@@ -12,7 +11,6 @@ export const instrumentExposureProfileSchema = z.object({
   instrumentName: z.string().trim().min(1).nullable(),
   market: supportedMarketSchema,
   notes: z.string().trim().min(1).nullable(),
-  reviewStatus: exposureReviewStatusSchema,
   source: z.string().trim().min(1).nullable(),
   ticker: z.string().trim().min(1),
   underlyingMarket: supportedMarketSchema,
@@ -30,18 +28,7 @@ export const exposureProfilesResponseSchema = z.object({
   profiles: z.array(instrumentExposureProfileSchema),
 })
 
-export const upsertExposureProfileRequestSchema = z.object({
-  profile: upsertInstrumentExposureProfileSchema,
-})
-
-export const upsertExposureProfileResponseSchema = z.object({
-  profile: instrumentExposureProfileSchema,
-})
-
 export type ExposureDirection = z.infer<typeof exposureDirectionSchema>
-export type ExposureReviewStatus = z.infer<
-  typeof exposureReviewStatusSchema
->
 export type InstrumentExposureProfile = z.infer<
   typeof instrumentExposureProfileSchema
 >
@@ -56,7 +43,6 @@ export const DEFAULT_EXPOSURE_PROFILES: UpsertInstrumentExposureProfile[] = [
     instrumentName: "GraniteShares 2x Long AMD Daily ETF",
     market: "US",
     notes: null,
-    reviewStatus: "reviewed",
     source: "seed",
     ticker: "AMDL",
     underlyingMarket: "US",
@@ -68,7 +54,6 @@ export const DEFAULT_EXPOSURE_PROFILES: UpsertInstrumentExposureProfile[] = [
     instrumentName: "Direxion Daily GOOGL Bull 2X Shares",
     market: "US",
     notes: null,
-    reviewStatus: "reviewed",
     source: "seed",
     ticker: "GGLL",
     underlyingMarket: "US",
@@ -80,7 +65,6 @@ export const DEFAULT_EXPOSURE_PROFILES: UpsertInstrumentExposureProfile[] = [
     instrumentName: "Direxion Daily MU Bull 2X Shares",
     market: "US",
     notes: null,
-    reviewStatus: "reviewed",
     source: "seed",
     ticker: "MUU",
     underlyingMarket: "US",
@@ -92,7 +76,6 @@ export const DEFAULT_EXPOSURE_PROFILES: UpsertInstrumentExposureProfile[] = [
     instrumentName: "GraniteShares 2x Long NVDA Daily ETF",
     market: "US",
     notes: null,
-    reviewStatus: "reviewed",
     source: "seed",
     ticker: "NVDL",
     underlyingMarket: "US",
@@ -104,7 +87,6 @@ export const DEFAULT_EXPOSURE_PROFILES: UpsertInstrumentExposureProfile[] = [
     instrumentName: "Direxion Daily TSLA Bull 2X Shares",
     market: "US",
     notes: null,
-    reviewStatus: "reviewed",
     source: "seed",
     ticker: "TSLL",
     underlyingMarket: "US",
@@ -134,4 +116,3 @@ export function normalizeExposureProfile(
     underlyingTicker: profile.underlyingTicker.trim().toUpperCase(),
   }
 }
-

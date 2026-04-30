@@ -47,7 +47,7 @@ describe("exposure profile storage", () => {
     ])
   })
 
-  it("upserts a user-reviewed exposure profile", async () => {
+  it("upserts a user exposure profile", async () => {
     const databasePath = await createTempStorePath()
 
     const profile = await upsertInstrumentExposureProfile(
@@ -57,7 +57,6 @@ describe("exposure profile storage", () => {
         instrumentName: "Example 2x Long ETF",
         market: "US",
         notes: "User verified from issuer page.",
-        reviewStatus: "reviewed",
         source: "user",
         ticker: " abcl ",
         underlyingMarket: "US",
@@ -72,7 +71,6 @@ describe("exposure profile storage", () => {
       instrumentName: "Example 2x Long ETF",
       market: "US",
       notes: "User verified from issuer page.",
-      reviewStatus: "reviewed",
       source: "user",
       ticker: "ABCL",
       underlyingMarket: "US",

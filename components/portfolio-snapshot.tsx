@@ -2,28 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { Cell, Pie, PieChart } from "recharts"
-import { CircleAlert, Pencil, RefreshCcw } from "lucide-react"
+import { CircleAlert, RefreshCcw } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -32,15 +16,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Textarea } from "@/components/ui/textarea"
 import {
   exposureProfilesResponseSchema,
-  getExposureProfileKey,
-  upsertExposureProfileResponseSchema,
-  type ExposureDirection,
-  type ExposureReviewStatus,
   type InstrumentExposureProfile,
-  type UpsertInstrumentExposureProfile,
 } from "@/lib/portfolio/exposure-profiles"
 import {
   aggregateHoldings,
@@ -54,7 +32,6 @@ import {
 import {
   fxRateResponseSchema,
   previousCloseResponseSchema,
-  type SupportedMarket,
   type FxRateSnapshot,
   type PreviousCloseLookupTarget,
   type PreviousCloseQuote,
@@ -72,19 +49,6 @@ type AllocationDatum = {
   ticker: string
   value: number
   weight: number
-}
-
-type ExposureProfileFormState = {
-  exposureDirection: ExposureDirection
-  exposureMultiplier: string
-  instrumentName: string
-  market: SupportedMarket
-  notes: string
-  reviewStatus: ExposureReviewStatus
-  source: string
-  ticker: string
-  underlyingMarket: SupportedMarket
-  underlyingTicker: string
 }
 
 const CHART_COLORS = [
@@ -186,9 +150,7 @@ function formatDate(value: string | null) {
   }
 
   const [, year, month, day] = dateMatch
-  const date = new Date(
-    Date.UTC(Number(year), Number(month) - 1, Number(day))
-  )
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
 
   return new Intl.DateTimeFormat("en-US", {
     day: "numeric",
@@ -302,29 +264,6 @@ async function fetchExposureProfiles(signal: AbortSignal) {
   return parsed.data.profiles
 }
 
-async function saveExposureProfile(
-  profile: UpsertInstrumentExposureProfile
-) {
-  const response = await fetch("/api/portfolio/exposure-profiles", {
-    body: JSON.stringify({ profile }),
-    headers: { "Content-Type": "application/json" },
-    method: "PUT",
-  })
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response))
-  }
-
-  const payload = await response.json()
-  const parsed = upsertExposureProfileResponseSchema.safeParse(payload)
-
-  if (!parsed.success) {
-    throw new Error("The server returned an unexpected exposure response.")
-  }
-
-  return parsed.data.profile
-}
-
 function buildQuoteTargets(
   holdings: ReturnType<typeof aggregateHoldings>["holdings"]
 ) {
@@ -356,74 +295,6 @@ function getHoldingLabel(holding: SnapshotHolding) {
 
 function getHoldingSubtitle(holding: SnapshotHolding) {
   return [holding.account, holding.market].filter(Boolean).join(" - ")
-}
-
-function getProfileForHolding(
-  holding: SnapshotHolding,
-  profilesByKey: Map<string, InstrumentExposureProfile>
-) {
-  return profilesByKey.get(
-    getExposureProfileKey({
-      market: holding.market,
-      ticker: holding.quoteTicker ?? holding.ticker,
-    })
-  )
-}
-
-function buildProfileFormState({
-  holding,
-  profile,
-}: {
-  holding: SnapshotHolding
-  profile: InstrumentExposureProfile | undefined
-}): ExposureProfileFormState {
-  const ticker = (holding.quoteTicker ?? holding.ticker).trim().toUpperCase()
-
-  return {
-    exposureDirection: profile?.exposureDirection ?? "long",
-    exposureMultiplier: String(profile?.exposureMultiplier ?? 1),
-    instrumentName: profile?.instrumentName ?? "",
-    market: profile?.market ?? holding.market,
-    notes: profile?.notes ?? "",
-    reviewStatus: profile?.reviewStatus ?? "reviewed",
-    source: profile?.source ?? "user",
-    ticker: profile?.ticker ?? ticker,
-    underlyingMarket: profile?.underlyingMarket ?? holding.market,
-    underlyingTicker: profile?.underlyingTicker ?? ticker,
-  }
-}
-
-function formStateToProfile(
-  formState: ExposureProfileFormState
-): UpsertInstrumentExposureProfile | string {
-  const multiplier = Number(formState.exposureMultiplier)
-  const ticker = formState.ticker.trim().toUpperCase()
-  const underlyingTicker = formState.underlyingTicker.trim().toUpperCase()
-
-  if (!ticker) {
-    return "Ticker is required."
-  }
-
-  if (!underlyingTicker) {
-    return "Underlying ticker is required."
-  }
-
-  if (!Number.isFinite(multiplier) || multiplier <= 0) {
-    return "Multiplier must be a positive number."
-  }
-
-  return {
-    exposureDirection: formState.exposureDirection,
-    exposureMultiplier: multiplier,
-    instrumentName: formState.instrumentName.trim() || null,
-    market: formState.market,
-    notes: formState.notes.trim() || null,
-    reviewStatus: formState.reviewStatus,
-    source: formState.source.trim() || "user",
-    ticker,
-    underlyingMarket: formState.underlyingMarket,
-    underlyingTicker,
-  }
 }
 
 function AllocationTooltip({
@@ -486,8 +357,8 @@ function EmptySnapshot() {
           Current portfolio
         </h2>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Open holdings from confirmation history will appear here after
-          records are added.
+          Open holdings from confirmation history will appear here after records
+          are added.
         </p>
       </div>
     </div>
@@ -518,9 +389,7 @@ function SnapshotAlert({
     .map((holding) => `${holding.ticker}: ${holding.quoteError}`)
   const messages = [
     ...aggregateIssues,
-    ...(quoteStatus === "error" && quoteIssue
-      ? [`Prices: ${quoteIssue}`]
-      : []),
+    ...(quoteStatus === "error" && quoteIssue ? [`Prices: ${quoteIssue}`] : []),
     ...(fxStatus === "error" && fxIssue ? [`FX: ${fxIssue}`] : []),
     ...(profileStatus === "error" && profileIssue
       ? [`Exposure profiles: ${profileIssue}`]
@@ -565,11 +434,7 @@ function SnapshotAlert({
   )
 }
 
-function AllocationPanel({
-  snapshot,
-}: {
-  snapshot: CurrentPortfolioSnapshot
-}) {
+function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
   const chartData = snapshot.exposureGroups
     .filter((group) => group.weight !== null)
     .map<AllocationDatum>((group, index) => ({
@@ -587,6 +452,8 @@ function AllocationPanel({
     (total, datum) => total + datum.value,
     0
   )
+  const grossExposure =
+    snapshot.totalUsd > 0 ? effectiveLongTotal / snapshot.totalUsd : null
 
   return (
     <div className="rounded-lg border border-border/70 bg-card p-4 shadow-sm">
@@ -596,7 +463,9 @@ function AllocationPanel({
             Total portfolio value
           </p>
           <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
-            {dateLabel ? <Badge variant="outline">Prices {dateLabel}</Badge> : null}
+            {dateLabel ? (
+              <Badge variant="outline">Prices {dateLabel}</Badge>
+            ) : null}
             {fxLabel ? <Badge variant="outline">FX {fxLabel}</Badge> : null}
           </div>
         </div>
@@ -642,10 +511,10 @@ function AllocationPanel({
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                 <div className="grid text-center">
                   <span className="text-2xl font-semibold tabular-nums">
-                    100%
+                    {formatPercent(grossExposure)}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    Long exposure
+                    Gross exposure
                   </span>
                 </div>
               </div>
@@ -679,13 +548,7 @@ function AllocationPanel({
   )
 }
 
-function HoldingsPanel({
-  holdings,
-  onEditExposure,
-}: {
-  holdings: SnapshotHolding[]
-  onEditExposure: (holding: SnapshotHolding) => void
-}) {
+function HoldingsPanel({ holdings }: { holdings: SnapshotHolding[] }) {
   const visibleHoldings = holdings.slice(0, 8)
   const hiddenCount = holdings.length - visibleHoldings.length
 
@@ -703,9 +566,6 @@ function HoldingsPanel({
             <TableHead>Holding</TableHead>
             <TableHead className="text-right">Value</TableHead>
             <TableHead className="text-right">Weight</TableHead>
-            <TableHead className="w-10">
-              <span className="sr-only">Exposure profile</span>
-            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -738,28 +598,12 @@ function HoldingsPanel({
                 <TableCell className="text-right text-muted-foreground tabular-nums">
                   {formatPercent(holding.weight)}
                 </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    onClick={() => onEditExposure(holding)}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Pencil className="size-3.5" />
-                    <span className="sr-only">
-                      Edit exposure profile for {holding.ticker}
-                    </span>
-                  </Button>
-                </TableCell>
               </TableRow>
             )
           })}
           {hiddenCount > 0 ? (
             <TableRow>
-              <TableCell
-                className="text-xs text-muted-foreground"
-                colSpan={4}
-              >
+              <TableCell className="text-xs text-muted-foreground" colSpan={3}>
                 {hiddenCount} more holdings in confirmation history.
               </TableCell>
             </TableRow>
@@ -767,173 +611,6 @@ function HoldingsPanel({
         </TableBody>
       </Table>
     </div>
-  )
-}
-
-function ExposureProfileDialog({
-  issue,
-  onOpenChange,
-  onSave,
-  open,
-  saving,
-  state,
-  setState,
-}: {
-  issue: string | null
-  onOpenChange: (open: boolean) => void
-  onSave: () => void
-  open: boolean
-  saving: boolean
-  state: ExposureProfileFormState | null
-  setState: (state: ExposureProfileFormState) => void
-}) {
-  if (!state) {
-    return null
-  }
-
-  return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Exposure profile</DialogTitle>
-          <DialogDescription>
-            Edit how this holding contributes to effective exposure.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="grid gap-4">
-          {issue ? (
-            <Alert variant="destructive">
-              <CircleAlert className="size-4" />
-              <AlertTitle>Unable to save profile</AlertTitle>
-              <AlertDescription>{issue}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1.5 text-sm font-medium">
-              Held ticker
-              <Input readOnly value={state.ticker} />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              Underlying ticker
-              <Input
-                onChange={(event) =>
-                  setState({
-                    ...state,
-                    underlyingTicker: event.currentTarget.value,
-                  })
-                }
-                value={state.underlyingTicker}
-              />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              Multiplier
-              <Input
-                min="0.01"
-                onChange={(event) =>
-                  setState({
-                    ...state,
-                    exposureMultiplier: event.currentTarget.value,
-                  })
-                }
-                step="0.01"
-                type="number"
-                value={state.exposureMultiplier}
-              />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              Direction
-              <Select
-                onValueChange={(value) =>
-                  setState({
-                    ...state,
-                    exposureDirection: value as ExposureDirection,
-                  })
-                }
-                value={state.exposureDirection}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="long">Long</SelectItem>
-                  <SelectItem value="inverse">Inverse</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              Review status
-              <Select
-                onValueChange={(value) =>
-                  setState({
-                    ...state,
-                    reviewStatus: value as ExposureReviewStatus,
-                  })
-                }
-                value={state.reviewStatus}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="reviewed">Reviewed</SelectItem>
-                  <SelectItem value="unreviewed">Unreviewed</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              Source
-              <Input
-                onChange={(event) =>
-                  setState({
-                    ...state,
-                    source: event.currentTarget.value,
-                  })
-                }
-                value={state.source}
-              />
-            </label>
-          </div>
-
-          <label className="grid gap-1.5 text-sm font-medium">
-            Instrument name
-            <Input
-              onChange={(event) =>
-                setState({
-                  ...state,
-                  instrumentName: event.currentTarget.value,
-                })
-              }
-              value={state.instrumentName}
-            />
-          </label>
-
-          <label className="grid gap-1.5 text-sm font-medium">
-            Notes
-            <Textarea
-              onChange={(event) =>
-                setState({
-                  ...state,
-                  notes: event.currentTarget.value,
-                })
-              }
-              value={state.notes}
-            />
-          </label>
-        </div>
-
-        <DialogFooter>
-          <Button
-            disabled={saving}
-            onClick={onSave}
-            type="button"
-          >
-            Save profile
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }
 
@@ -975,11 +652,6 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
   >([])
   const [profileStatus, setProfileStatus] = useState<LoadStatus>("idle")
   const [profileIssue, setProfileIssue] = useState<string | null>(null)
-  const [profileFormState, setProfileFormState] =
-    useState<ExposureProfileFormState | null>(null)
-  const [profileDialogOpen, setProfileDialogOpen] = useState(false)
-  const [profileSaving, setProfileSaving] = useState(false)
-  const [profileSaveIssue, setProfileSaveIssue] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
 
   const aggregated = useMemo(() => aggregateHoldings(rows), [rows])
@@ -994,19 +666,6 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
   const valuedHoldings = useMemo(
     () => applyPreviousCloseQuotes(aggregated.holdings, quotesByKey).holdings,
     [aggregated.holdings, quotesByKey]
-  )
-  const exposureProfilesByKey = useMemo(
-    () =>
-      new Map(
-        exposureProfiles.map((profile) => [
-          getExposureProfileKey({
-            market: profile.market,
-            ticker: profile.ticker,
-          }),
-          profile,
-        ])
-      ),
-    [exposureProfiles]
   )
   const effectiveFxSnapshot = hasTwdHoldings ? fxSnapshot : null
   const effectiveFxStatus = hasTwdHoldings ? fxStatus : "idle"
@@ -1023,67 +682,6 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
     quoteStatus === "loading" ||
     effectiveFxStatus === "loading" ||
     profileStatus === "loading"
-
-  function handleEditExposure(holding: SnapshotHolding) {
-    setProfileSaveIssue(null)
-    setProfileFormState(
-      buildProfileFormState({
-        holding,
-        profile: getProfileForHolding(holding, exposureProfilesByKey),
-      })
-    )
-    setProfileDialogOpen(true)
-  }
-
-  async function handleSaveExposureProfile() {
-    if (!profileFormState) {
-      return
-    }
-
-    const nextProfile = formStateToProfile(profileFormState)
-
-    if (typeof nextProfile === "string") {
-      setProfileSaveIssue(nextProfile)
-      return
-    }
-
-    setProfileSaving(true)
-    setProfileSaveIssue(null)
-
-    try {
-      const savedProfile = await saveExposureProfile(nextProfile)
-      const savedKey = getExposureProfileKey({
-        market: savedProfile.market,
-        ticker: savedProfile.ticker,
-      })
-
-      setExposureProfiles((current) => {
-        const nextByKey = new Map(
-          current.map((profile) => [
-            getExposureProfileKey({
-              market: profile.market,
-              ticker: profile.ticker,
-            }),
-            profile,
-          ])
-        )
-
-        nextByKey.set(savedKey, savedProfile)
-
-        return [...nextByKey.values()].sort((left, right) =>
-          `${left.market}:${left.ticker}`.localeCompare(
-            `${right.market}:${right.ticker}`
-          )
-        )
-      })
-      setProfileDialogOpen(false)
-      setProfileFormState(null)
-    } catch (error) {
-      setProfileSaveIssue(getErrorMessage(error))
-    } finally {
-      setProfileSaving(false)
-    }
-  }
 
   useEffect(() => {
     if (quoteTargets.length === 0) {
@@ -1276,28 +874,9 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]">
         <AllocationPanel snapshot={snapshot} />
         <div className="grid content-start gap-4">
-          <HoldingsPanel
-            holdings={snapshot.holdings}
-            onEditExposure={handleEditExposure}
-          />
+          <HoldingsPanel holdings={snapshot.holdings} />
         </div>
       </div>
-      <ExposureProfileDialog
-        issue={profileSaveIssue}
-        onOpenChange={(open) => {
-          setProfileDialogOpen(open)
-
-          if (!open) {
-            setProfileFormState(null)
-            setProfileSaveIssue(null)
-          }
-        }}
-        onSave={handleSaveExposureProfile}
-        open={profileDialogOpen}
-        saving={profileSaving}
-        state={profileFormState}
-        setState={setProfileFormState}
-      />
     </section>
   )
 }

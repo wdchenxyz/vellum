@@ -1,7 +1,6 @@
 import {
   getExposureProfileKey,
   type ExposureDirection,
-  type ExposureReviewStatus,
   type InstrumentExposureProfile,
 } from "@/lib/portfolio/exposure-profiles"
 import type { ValuedHolding } from "@/lib/portfolio/holdings"
@@ -14,7 +13,6 @@ export type SnapshotHolding = {
   effectiveValueUsd: number | null
   exposureDirection: ExposureDirection
   exposureProfileSource: string | null
-  exposureReviewStatus: ExposureReviewStatus
   exposureUnderlyingMarket: ValuedHolding["market"]
   exposureUnderlyingTicker: string
   key: string
@@ -94,8 +92,10 @@ function getHoldingExposureProfile(
   )
 }
 
-function getEffectiveMultiplier(profile: InstrumentExposureProfile | undefined) {
-  if (!profile || profile.reviewStatus !== "reviewed") {
+function getEffectiveMultiplier(
+  profile: InstrumentExposureProfile | undefined
+) {
+  if (!profile) {
     return 1
   }
 
@@ -157,16 +157,6 @@ function compareSnapshotHoldings(
 
 function buildExposureIssues(holdings: SnapshotHolding[]) {
   return holdings.flatMap<SnapshotExposureIssue>((holding) => {
-    if (holding.exposureReviewStatus !== "reviewed") {
-      return [
-        {
-          key: `${holding.key}:review`,
-          message: `${holding.ticker} has an unreviewed exposure profile, so it is treated as direct 1x exposure.`,
-          ticker: holding.ticker,
-        },
-      ]
-    }
-
     if (holding.exposureDirection === "inverse") {
       return [
         {
@@ -279,7 +269,6 @@ export function buildCurrentPortfolioSnapshot({
       effectiveValueUsd,
       exposureDirection: exposureProfile?.exposureDirection ?? "long",
       exposureProfileSource: exposureProfile?.source ?? null,
-      exposureReviewStatus: exposureProfile?.reviewStatus ?? "reviewed",
       exposureUnderlyingMarket:
         exposureProfile?.underlyingMarket ?? holding.market,
       exposureUnderlyingTicker:
@@ -327,8 +316,7 @@ export function buildCurrentPortfolioSnapshot({
     (holding) => holding.marketValue === null
   ).length
   const missingFxCount = holdingsWithWeights.filter(
-    (holding) =>
-      holding.marketValue !== null && holding.marketValueUsd === null
+    (holding) => holding.marketValue !== null && holding.marketValueUsd === null
   ).length
   const quoteDates = [
     ...new Set(

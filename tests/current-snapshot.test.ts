@@ -21,7 +21,6 @@ const amdlProfile: InstrumentExposureProfile = {
   instrumentName: "GraniteShares 2x Long AMD Daily ETF",
   market: "US",
   notes: null,
-  reviewStatus: "reviewed",
   source: "test",
   ticker: "AMDL",
   underlyingMarket: "US",
@@ -158,42 +157,6 @@ describe("buildCurrentPortfolioSnapshot", () => {
         marketValueUsd: 500,
         ticker: "AMD",
         weight: 0.2,
-      },
-    ])
-  })
-
-  it("uses 1x for unreviewed profiles and surfaces a review issue", () => {
-    const snapshot = buildCurrentPortfolioSnapshot({
-      exposureProfiles: [
-        {
-          ...amdlProfile,
-          reviewStatus: "unreviewed",
-        },
-      ],
-      fxSnapshot,
-      holdings: [
-        makeHolding({
-          key: "US:AMDL",
-          marketValue: 1000,
-          quoteKey: "US:AMDL",
-          quoteTicker: "AMDL",
-          ticker: "AMDL",
-        }),
-      ],
-    })
-
-    expect(snapshot.effectiveTotalUsd).toBe(1000)
-    expect(snapshot.holdings[0]).toMatchObject({
-      effectiveMultiplier: 1,
-      exposureReviewStatus: "unreviewed",
-      exposureUnderlyingTicker: "AMD",
-    })
-    expect(snapshot.exposureIssues).toEqual([
-      {
-        key: "US:AMDL:review",
-        message:
-          "AMDL has an unreviewed exposure profile, so it is treated as direct 1x exposure.",
-        ticker: "AMDL",
       },
     ])
   })
