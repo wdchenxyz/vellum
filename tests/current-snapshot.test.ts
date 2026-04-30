@@ -84,7 +84,7 @@ describe("buildCurrentPortfolioSnapshot", () => {
     expect(snapshot.quoteDates).toEqual(["2026-04-29"])
   })
 
-  it("rolls known single-stock leveraged ETFs into effective exposure", () => {
+  it("weights leveraged ETFs by their effective exposure", () => {
     const snapshot = buildCurrentPortfolioSnapshot({
       fxSnapshot,
       holdings: [
@@ -105,14 +105,30 @@ describe("buildCurrentPortfolioSnapshot", () => {
       ],
     })
 
-    expect(snapshot.exposureTotalUsd).toBe(2500)
-    expect(snapshot.exposures).toEqual([
+    expect(snapshot.totalUsd).toBe(1500)
+    expect(snapshot.effectiveTotalUsd).toBe(2500)
+    expect(
+      snapshot.holdings.map((holding) => ({
+        effectiveMultiplier: holding.effectiveMultiplier,
+        effectiveValueUsd: holding.effectiveValueUsd,
+        marketValueUsd: holding.marketValueUsd,
+        ticker: holding.ticker,
+        weight: holding.weight,
+      }))
+    ).toEqual([
       {
-        key: "AMD",
-        sources: ["AMD", "AMDL"],
+        effectiveMultiplier: 2,
+        effectiveValueUsd: 2000,
+        marketValueUsd: 1000,
+        ticker: "AMDL",
+        weight: 0.8,
+      },
+      {
+        effectiveMultiplier: 1,
+        effectiveValueUsd: 500,
+        marketValueUsd: 500,
         ticker: "AMD",
-        valueUsd: 2500,
-        weight: 1,
+        weight: 0.2,
       },
     ])
   })

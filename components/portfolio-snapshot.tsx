@@ -23,7 +23,6 @@ import {
 import {
   buildCurrentPortfolioSnapshot,
   type CurrentPortfolioSnapshot,
-  type SnapshotExposure,
   type SnapshotHolding,
 } from "@/lib/portfolio/current-snapshot"
 import {
@@ -401,13 +400,14 @@ function AllocationPanel({
 }) {
   const chartData = snapshot.holdings
     .filter(
-      (holding) => holding.marketValueUsd !== null && holding.weight !== null
+      (holding) =>
+        holding.effectiveValueUsd !== null && holding.weight !== null
     )
     .map<AllocationDatum>((holding, index) => ({
       fill: getColor(index),
       key: holding.key,
       ticker: getHoldingLabel(holding).primary,
-      value: holding.marketValueUsd ?? 0,
+      value: holding.effectiveValueUsd ?? 0,
       weight: holding.weight ?? 0,
     }))
   const dateLabel = formatDateRange(snapshot.quoteDates)
@@ -570,63 +570,6 @@ function HoldingsPanel({ holdings }: { holdings: SnapshotHolding[] }) {
           ) : null}
         </TableBody>
       </Table>
-    </div>
-  )
-}
-
-function ExposurePanel({
-  exposures,
-}: {
-  exposures: SnapshotExposure[]
-}) {
-  const visibleExposures = exposures.slice(0, 5)
-
-  return (
-    <div className="rounded-lg border border-border/70 bg-card p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">Effective exposure</h3>
-        <Badge variant="secondary">Estimated</Badge>
-      </div>
-
-      <div className="mt-4 grid gap-3">
-        {visibleExposures.length > 0 ? (
-          visibleExposures.map((exposure, index) => (
-            <div className="grid gap-1.5" key={exposure.key}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">
-                    {exposure.ticker}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {exposure.sources.join(", ")}
-                  </div>
-                </div>
-                <div className="text-sm font-medium tabular-nums">
-                  {formatPercent(exposure.weight)}
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full"
-                    style={{
-                      backgroundColor: getColor(index),
-                      width: `${Math.max(exposure.weight * 100, 1)}%`,
-                    }}
-                  />
-                </div>
-                <div className="w-24 text-right text-sm text-muted-foreground tabular-nums">
-                  {formatUsd(exposure.valueUsd)}
-                </div>
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="rounded-lg border border-dashed border-border/80 px-3 py-6 text-center text-sm text-muted-foreground">
-            Waiting for priced holdings
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -849,7 +792,6 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
         <AllocationPanel snapshot={snapshot} />
         <div className="grid content-start gap-4">
           <HoldingsPanel holdings={snapshot.holdings} />
-          <ExposurePanel exposures={snapshot.exposures} />
         </div>
       </div>
     </section>

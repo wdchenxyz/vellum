@@ -4,6 +4,8 @@ import type { FxRateSnapshot } from "@/lib/portfolio/schema"
 export type SnapshotHolding = {
   account: string | null
   currency: string
+  effectiveMultiplier: number
+  effectiveValueUsd: number | null
   key: string
   marketValue: number | null
   marketValueUsd: number | null
@@ -17,17 +19,8 @@ export type SnapshotHolding = {
   weight: number | null
 }
 
-export type SnapshotExposure = {
-  key: string
-  sources: string[]
-  ticker: string
-  valueUsd: number
-  weight: number
-}
-
 export type CurrentPortfolioSnapshot = {
-  exposureTotalUsd: number
-  exposures: SnapshotExposure[]
+  effectiveTotalUsd: number
   fxAsOf: string | null
   holdings: SnapshotHolding[]
   isComplete: boolean
@@ -39,12 +32,12 @@ export type CurrentPortfolioSnapshot = {
 
 const FLOAT_EPSILON = 1e-8
 
-const EXPOSURE_RULES: Record<string, { multiplier: number; ticker: string }> = {
-  AMDL: { multiplier: 2, ticker: "AMD" },
-  GGLL: { multiplier: 2, ticker: "GOOGL" },
-  MUU: { multiplier: 2, ticker: "MU" },
-  NVDL: { multiplier: 2, ticker: "NVDA" },
-  TSLL: { multiplier: 2, ticker: "TSLA" },
+const EXPOSURE_MULTIPLIERS: Record<string, number> = {
+  AMDL: 2,
+  GGLL: 2,
+  MUU: 2,
+  NVDL: 2,
+  TSLL: 2,
 }
 
 function roundNumber(value: number, decimals = 10) {
@@ -61,6 +54,12 @@ function normalizeTicker(ticker: string) {
 
 function normalizeCurrency(currency: string) {
   return currency.trim().toUpperCase()
+}
+
+function getEffectiveMultiplier(holding: ValuedHolding) {
+  const ticker = normalizeTicker(holding.quoteTicker ?? holding.ticker)
+
+  return EXPOSURE_MULTIPLIERS[ticker] ?? 1
 }
 
 export function convertMarketValueToUsd({
@@ -97,80 +96,19 @@ function compareSnapshotHoldings(
     return right.weight - left.weight
   }
 
-  if (left.marketValueUsd !== null && right.marketValueUsd !== null) {
-    return right.marketValueUsd - left.marketValueUsd
+  if (left.effectiveValueUsd !== null && right.effectiveValueUsd !== null) {
+    return right.effectiveValueUsd - left.effectiveValueUsd
   }
 
-  if (left.marketValueUsd !== null) {
+  if (left.effectiveValueUsd !== null) {
     return -1
   }
 
-  if (right.marketValueUsd !== null) {
+  if (right.effectiveValueUsd !== null) {
     return 1
   }
 
   return left.ticker.localeCompare(right.ticker)
-}
-
-function buildEffectiveExposures(holdings: SnapshotHolding[]) {
-  const exposuresByTicker = new Map<
-    string,
-    { sources: Set<string>; ticker: string; valueUsd: number }
-  >()
-
-  for (const holding of holdings) {
-    if (holding.marketValueUsd === null) {
-      continue
-    }
-
-    const rule =
-      EXPOSURE_RULES[normalizeTicker(holding.quoteTicker ?? holding.ticker)] ?? {
-        multiplier: 1,
-        ticker: normalizeTicker(holding.quoteTicker ?? holding.ticker),
-      }
-    const valueUsd = roundNumber(holding.marketValueUsd * rule.multiplier)
-    const existing = exposuresByTicker.get(rule.ticker)
-
-    if (!existing) {
-      exposuresByTicker.set(rule.ticker, {
-        sources: new Set([holding.ticker]),
-        ticker: rule.ticker,
-        valueUsd,
-      })
-      continue
-    }
-
-    existing.sources.add(holding.ticker)
-    existing.valueUsd = roundNumber(existing.valueUsd + valueUsd)
-  }
-
-  const exposureTotalUsd = roundNumber(
-    [...exposuresByTicker.values()].reduce(
-      (total, exposure) => total + exposure.valueUsd,
-      0
-    )
-  )
-
-  const exposures = [...exposuresByTicker.values()]
-    .map<SnapshotExposure>((exposure) => ({
-      key: exposure.ticker,
-      sources: [...exposure.sources].sort(),
-      ticker: exposure.ticker,
-      valueUsd: exposure.valueUsd,
-      weight:
-        exposureTotalUsd > 0
-          ? roundNumber(exposure.valueUsd / exposureTotalUsd, 6)
-          : 0,
-    }))
-    .sort((left, right) => {
-      if (right.weight !== left.weight) {
-        return right.weight - left.weight
-      }
-
-      return left.ticker.localeCompare(right.ticker)
-    })
-
-  return { exposureTotalUsd, exposures }
 }
 
 export function buildCurrentPortfolioSnapshot({
@@ -186,10 +124,17 @@ export function buildCurrentPortfolioSnapshot({
       fxSnapshot,
       value: holding.marketValue,
     })
+    const effectiveMultiplier = getEffectiveMultiplier(holding)
+    const effectiveValueUsd =
+      marketValueUsd === null
+        ? null
+        : roundNumber(marketValueUsd * effectiveMultiplier)
 
     return {
       account: holding.account,
       currency: holding.currency,
+      effectiveMultiplier,
+      effectiveValueUsd,
       key: holding.key,
       market: holding.market,
       marketValue: holding.marketValue,
@@ -210,19 +155,23 @@ export function buildCurrentPortfolioSnapshot({
       0
     )
   )
+  const effectiveTotalUsd = roundNumber(
+    snapshotHoldings.reduce(
+      (total, holding) => total + (holding.effectiveValueUsd ?? 0),
+      0
+    )
+  )
 
   const holdingsWithWeights = snapshotHoldings
     .map((holding) => ({
       ...holding,
       weight:
-        totalUsd > 0 && holding.marketValueUsd !== null
-          ? roundNumber(holding.marketValueUsd / totalUsd, 6)
+        effectiveTotalUsd > 0 && holding.effectiveValueUsd !== null
+          ? roundNumber(holding.effectiveValueUsd / effectiveTotalUsd, 6)
           : null,
     }))
     .sort(compareSnapshotHoldings)
 
-  const { exposureTotalUsd, exposures } =
-    buildEffectiveExposures(holdingsWithWeights)
   const missingPriceCount = holdingsWithWeights.filter(
     (holding) => holding.marketValue === null
   ).length
@@ -239,8 +188,7 @@ export function buildCurrentPortfolioSnapshot({
   ].sort()
 
   return {
-    exposureTotalUsd,
-    exposures,
+    effectiveTotalUsd,
     fxAsOf: fxSnapshot?.asOf ?? null,
     holdings: holdingsWithWeights,
     isComplete: missingPriceCount === 0 && missingFxCount === 0,
