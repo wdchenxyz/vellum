@@ -19,6 +19,7 @@ import {
   PromptInputTools,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input"
+import { PortfolioSnapshot } from "@/components/portfolio-snapshot"
 import { TradesTable } from "@/components/trades-table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -383,7 +384,7 @@ export function TradeExtractor() {
             <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
               Ingest
             </p>
-            <span className="text-xs text-muted-foreground">
+            <span className="hidden min-w-0 flex-1 text-xs text-muted-foreground sm:inline">
               Upload screenshots or PDFs from the correct account.
             </span>
           </div>
@@ -508,6 +509,8 @@ export function TradeExtractor() {
           </SheetContent>
         </Sheet>
       </section>
+
+      <PortfolioSnapshot rows={rows} />
 
       <TradesTable
         issues={successMessage ? issues : []}

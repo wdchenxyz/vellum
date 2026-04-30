@@ -299,7 +299,7 @@ export function ChatLayout({ children }: { children: ReactNode }) {
     >
       <ChatStateProvider>
         <div className="flex h-svh overflow-hidden">
-          <div className="flex-1 overflow-y-auto">{children}</div>
+          <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
           {/* Spacer to push content when sidebar is open */}
           {open && !expanded && <div className="w-[480px] shrink-0" />}
         </div>
