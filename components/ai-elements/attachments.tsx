@@ -210,7 +210,7 @@ export const Attachment = ({
           "group relative",
           variant === "grid" && "size-24 overflow-hidden rounded-lg",
           variant === "inline" && [
-            "flex min-h-11 cursor-pointer items-center gap-2 select-none",
+            "flex min-h-11 max-w-full min-w-0 cursor-pointer items-center gap-2 overflow-hidden select-none",
             "rounded-md border border-border px-2 py-1 md:min-h-8 md:gap-1.5 md:px-1.5 md:py-0",
             "text-sm font-medium transition-all",
             "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
@@ -300,7 +300,7 @@ export const AttachmentInfo = ({
   }
 
   return (
-    <div className={cn("min-w-0 flex-1", className)} {...props}>
+    <div className={cn("min-w-0 flex-1", className)} title={label} {...props}>
       <span className="block truncate">{label}</span>
       {showMediaType && data.mediaType && (
         <span className="block truncate text-xs text-muted-foreground">
