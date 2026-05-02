@@ -8,11 +8,12 @@ const tradeAccountSchema = z.string().trim().min(1).nullable()
 
 export const tickerCandidateSchema = z.object({
   confidence: z.number().finite().min(0).max(1).nullable().optional(),
-  reason: z.string().trim().min(1).nullable().optional(),
+  reason: z.string().trim().min(1).max(160).nullable().optional(),
   ticker: z
     .string()
     .trim()
     .min(1)
+    .max(16)
     .describe("A possible ticker inferred from the visible security name."),
 })
 
@@ -31,6 +32,7 @@ export const extractedTradeSchema = z.object({
     .string()
     .trim()
     .min(1)
+    .max(160)
     .nullable()
     .optional()
     .describe(
@@ -38,7 +40,7 @@ export const extractedTradeSchema = z.object({
     ),
   tickerCandidates: z
     .array(tickerCandidateSchema)
-    .max(5)
+    .max(3)
     .optional()
     .describe(
       "Possible ticker candidates inferred from a visible security name when the ticker itself is not visible."
@@ -65,6 +67,15 @@ export const extractedTradeSchema = z.object({
     .nonnegative()
     .nullable()
     .describe("Total fee or commission as a plain number, otherwise null."),
+  settlementAmount: z
+    .number()
+    .finite()
+    .nonnegative()
+    .nullable()
+    .optional()
+    .describe(
+      "Absolute total payable or receivable amount for the trade if visible, otherwise null."
+    ),
   side: tradeSideSchema.describe("Trade direction, always BUY or SELL."),
 })
 
@@ -113,7 +124,12 @@ export const fileExtractionResultSchema = z.object({
 })
 
 const tradeTableRowBaseSchema = extractedTradeSchema
-  .omit({ fee: true, securityName: true, tickerCandidates: true })
+  .omit({
+    fee: true,
+    securityName: true,
+    settlementAmount: true,
+    tickerCandidates: true,
+  })
   .extend({
     account: tradeAccountSchema,
     totalAmount: z

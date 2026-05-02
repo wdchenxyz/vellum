@@ -11,6 +11,13 @@ const CJK_PATTERN = /\p{Script=Han}/u
 const MIN_NAME_MATCH_SCORE = 0.6
 const MIN_TOP_SCORE_GAP = 0.15
 
+const KNOWN_LEVERAGED_FUND_PATTERNS = [
+  {
+    ticker: "GGLL",
+    tokens: ["DIREXION", "GOOGL", "BULL", "2X"],
+  },
+] as const
+
 const symbolSearchResponseSchema = z.object({
   data: z
     .array(
@@ -85,6 +92,18 @@ function normalizeToken(token: string) {
   }
 
   return normalized
+}
+
+function resolveKnownLeveragedFundTicker(trade: ExtractedTrade) {
+  const visibleText = `${trade.securityName ?? ""} ${trade.ticker}`.toUpperCase()
+
+  for (const pattern of KNOWN_LEVERAGED_FUND_PATTERNS) {
+    if (pattern.tokens.every((token) => visibleText.includes(token))) {
+      return pattern.ticker
+    }
+  }
+
+  return null
 }
 
 function tokenizeName(value: string) {
@@ -271,6 +290,18 @@ export async function resolveExtractedTradeTicker({
   fetcher?: typeof fetch
   trade: ExtractedTrade
 }): Promise<TickerResolutionResult> {
+  const knownFundTicker = resolveKnownLeveragedFundTicker(trade)
+
+  if (knownFundTicker) {
+    return {
+      status: "accepted",
+      trade: {
+        ...trade,
+        ticker: knownFundTicker,
+      },
+    }
+  }
+
   if (isTickerLike(trade.ticker)) {
     return { status: "accepted", trade }
   }

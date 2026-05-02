@@ -80,6 +80,25 @@ describe("trade ticker resolution", () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it("does not accept an underlying ticker embedded in a known leveraged fund name", async () => {
+    const fetchMock = vi.fn()
+
+    const result = await resolveExtractedTradeTicker({
+      fetcher: fetchMock as unknown as typeof fetch,
+      trade: makeTrade({
+        securityName: "Direxion Daily GOOGL Bull 2x E",
+        ticker: "GOOGL",
+        tickerCandidates: [],
+      }),
+    })
+
+    expect(result).toMatchObject({
+      status: "accepted",
+      trade: { ticker: "GGLL" },
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it("resolves a validated candidate from a visible security name", async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = input.toString()

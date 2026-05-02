@@ -31,6 +31,14 @@ function getDataUrlByteLength(dataUrl: string) {
   return Buffer.from(dataUrl.slice(commaIndex + 1), "base64").byteLength
 }
 
+function getUploadByteLength(dataUrl: string) {
+  try {
+    return getDataUrlByteLength(dataUrl)
+  } catch {
+    return null
+  }
+}
+
 function validateUploads(files: Array<{ mediaType: string; url: string }>) {
   let totalBytes = 0
 
@@ -118,6 +126,21 @@ export async function POST(request: Request) {
     )
   }
 
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index]
+    const file = parsed.data.files[index]
+
+    if (result.error || result.trades.length === 0) {
+      console.warn("[trades/extract] no persisted trades for uploaded file", {
+        error: result.error ?? null,
+        fileName: result.fileName,
+        mediaType: file?.mediaType ?? null,
+        sizeBytes: file ? getUploadByteLength(file.url) : null,
+        tradeCount: result.trades.length,
+      })
+    }
+  }
+
   const account = parsed.data.account ?? null
 
   const rows: TradeTableRow[] = results.flatMap((result) =>
@@ -131,12 +154,14 @@ export async function POST(request: Request) {
       side: trade.side,
       sourceFile: result.fileName,
       ticker: trade.ticker,
-      totalAmount: computeTradeTotalAmount({
-        fee: trade.fee,
-        price: trade.price,
-        quantity: trade.quantity,
-        side: trade.side,
-      }),
+      totalAmount:
+        trade.settlementAmount ??
+        computeTradeTotalAmount({
+          fee: trade.fee,
+          price: trade.price,
+          quantity: trade.quantity,
+          side: trade.side,
+        }),
     }))
   )
 

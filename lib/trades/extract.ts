@@ -17,10 +17,13 @@ const EXTRACTION_INSTRUCTIONS = [
   "Normalize the date to YYYY-MM-DD when possible.",
   "For Taiwan-listed securities, prefer the numeric stock code in the ticker field when it is visible; otherwise use the visible stock name.",
   "If a security name is visible, return it in securityName, even when it is truncated.",
-  "If no ticker is visible but the security name suggests likely ticker symbols, return up to 3 tickerCandidates with confidence and reason.",
-  "Ticker candidates are guesses for later validation only; keep the ticker field grounded in visible text when the ticker itself is not visible.",
+  "For ETFs, ETNs, leveraged funds, or inverse funds, do not use an underlying stock symbol embedded in the fund name as the traded ticker unless the actual ticker is visibly shown standalone.",
+  "If the actual traded ticker is not visible for a fund, put the visible fund name in ticker.",
+  "Omit tickerCandidates unless a short candidate ticker is explicitly printed separately from the security name.",
   "Normalize ticker and currency to uppercase.",
   "Return quantity, price, and fee as plain numbers without commas or symbols.",
+  "Return settlementAmount as the absolute total payable or receivable amount for the trade when it is visible in the row or details.",
+  "If a row shows total payable/receivable amount but hides the fee, derive the fee from the absolute total minus price times quantity when that arithmetic is clear; otherwise leave fee null.",
   "Keep quantity positive. The side field carries the direction.",
   "Use null for currency or fee when a value is missing or unreadable.",
   'If the file does not contain any valid transactions, return {"trades":[]}.',
@@ -43,6 +46,25 @@ function getModelInputData(file: TradeFileInput) {
   throw new Error(
     "The uploaded file could not be encoded for the model. Please retry with a smaller image or PDF."
   )
+}
+
+function getModelInputPart(file: TradeFileInput) {
+  const data = getModelInputData(file)
+
+  if (file.mediaType.startsWith("image/")) {
+    return {
+      image: data,
+      mediaType: file.mediaType,
+      type: "image" as const,
+    }
+  }
+
+  return {
+    data,
+    filename: file.filename,
+    mediaType: file.mediaType,
+    type: "file" as const,
+  }
 }
 
 function normalizeNullableString(value: string | null) {
@@ -72,6 +94,7 @@ function normalizeTrade(trade: ExtractedTrade): ExtractedTrade {
     price: trade.price,
     currency: normalizeNullableString(trade.currency),
     fee: trade.fee,
+    settlementAmount: trade.settlementAmount ?? null,
     side: trade.side,
   }
 }
@@ -82,6 +105,26 @@ function getErrorMessage(error: unknown) {
   }
 
   return "The model could not extract transactions from this file."
+}
+
+type ExtractionFinishSummary = {
+  finishReason: string
+  rawFinishReason: string | null
+  textLength: number
+}
+
+function formatIncompleteOutputMessage(
+  finish: ExtractionFinishSummary | null
+) {
+  if (!finish) {
+    return "The model did not return a structured extraction result."
+  }
+
+  const rawReason = finish.rawFinishReason
+    ? `, provider reason ${finish.rawFinishReason}`
+    : ""
+
+  return `The model stopped before returning a structured extraction result (${finish.finishReason}${rawReason}, ${finish.textLength} text characters).`
 }
 
 export async function extractTradesFromFile({
@@ -101,17 +144,26 @@ export async function extractTradesFromFile({
     }
   }
 
+  let finishSummary: ExtractionFinishSummary | null = null
+
   try {
     const result = await generateText({
       model: gateway(DEFAULT_MODEL),
       temperature: 0,
-      maxOutputTokens: 2000,
+      maxOutputTokens: 6000,
       output: Output.object({
         schema: extractedTradesEnvelopeSchema,
         name: "trade_extraction",
         description:
           "One or more securities trades extracted from a screenshot or PDF.",
       }),
+      onFinish: ({ finishReason, rawFinishReason, text }) => {
+        finishSummary = {
+          finishReason,
+          rawFinishReason: rawFinishReason ?? null,
+          textLength: text.length,
+        }
+      },
       messages: [
         {
           role: "user",
@@ -126,15 +178,19 @@ export async function extractTradesFromFile({
                   : "User note: none provided.",
               ].join("\n\n"),
             },
-            {
-              type: "file",
-              data: getModelInputData(file),
-              mediaType: file.mediaType,
-            },
+            getModelInputPart(file),
           ],
         },
       ],
     })
+
+    if (result.finishReason !== "stop") {
+      return {
+        fileName,
+        trades: [],
+        error: formatIncompleteOutputMessage(finishSummary),
+      }
+    }
 
     return {
       fileName,
@@ -144,7 +200,10 @@ export async function extractTradesFromFile({
     return {
       fileName,
       trades: [],
-      error: getErrorMessage(error),
+      error:
+        getErrorMessage(error) === "No output generated."
+          ? formatIncompleteOutputMessage(finishSummary)
+          : getErrorMessage(error),
     }
   }
 }
