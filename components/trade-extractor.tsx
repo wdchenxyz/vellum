@@ -63,6 +63,7 @@ import {
   Plus,
   TriangleAlert,
   UploadCloud,
+  X,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
@@ -78,6 +79,8 @@ type CompletedExtractionNotice = Omit<ExtractionNotice, "id" | "kind"> & {
 }
 
 const RUNNING_EXTRACTION_NOTICE_ID = "running-extraction"
+const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000
+const EXTRACTION_NOTICE_STACK_SELECTOR = "[data-extraction-notice-stack]"
 
 const DEFAULT_ACCOUNT_OPTIONS = [
   "Firstrade",
@@ -111,6 +114,13 @@ function getErrorMessage(error: unknown) {
   }
 
   return "The request failed."
+}
+
+function isExtractionNoticeInteraction(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    target.closest(EXTRACTION_NOTICE_STACK_SELECTOR) !== null
+  )
 }
 
 function formatFileList(files: PromptInputMessage["files"]) {
@@ -148,7 +158,7 @@ function ExtractionNoticeCard({
       className={cn(
         "pointer-events-auto w-full animate-in rounded-xl border-border/70 bg-card/95 px-3 py-3 shadow-lg shadow-foreground/10 backdrop-blur-xl duration-200 fade-in-0 slide-in-from-right-3",
         notice.kind === "error"
-          ? "border-destructive/30 text-destructive"
+          ? "border-destructive/30 text-destructive has-data-[slot=alert-action]:pr-28"
           : "text-card-foreground"
       )}
       role={isRunning || isSuccess ? "status" : "alert"}
@@ -168,7 +178,7 @@ function ExtractionNoticeCard({
         {notice.description}
       </AlertDescription>
       {notice.kind === "error" ? (
-        <AlertAction>
+        <AlertAction className="flex items-center gap-1">
           <Button
             onClick={onOpenDrawer}
             size="xs"
@@ -176,6 +186,15 @@ function ExtractionNoticeCard({
             variant="ghost"
           >
             Review
+          </Button>
+          <Button
+            aria-label="Dismiss extraction failure"
+            onClick={onDismiss}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <X className="size-3" />
           </Button>
         </AlertAction>
       ) : isSuccess ? (
@@ -203,7 +222,10 @@ function ExtractionNoticeStack({
   }
 
   return (
-    <div className="pointer-events-none fixed top-4 right-4 left-4 z-[70] flex flex-col items-end gap-2 sm:top-5 sm:left-auto sm:w-88">
+    <div
+      className="pointer-events-none fixed top-4 right-4 left-4 z-[70] flex flex-col items-end gap-2 sm:top-5 sm:left-auto sm:w-88"
+      data-extraction-notice-stack
+    >
       {notices.map((notice) => (
         <ExtractionNoticeCard
           key={notice.id}
@@ -416,6 +438,28 @@ export function TradeExtractor() {
       currentNotices.filter((notice) => notice.id !== id)
     )
   }, [])
+
+  useEffect(() => {
+    const successNoticeIds = extractionNotices
+      .filter((notice) => notice.kind === "success")
+      .map((notice) => notice.id)
+
+    if (successNoticeIds.length === 0) {
+      return
+    }
+
+    const timeoutIds = successNoticeIds.map((id) =>
+      window.setTimeout(() => {
+        dismissExtractionNotice(id)
+      }, SUCCESS_NOTICE_DISMISS_DELAY_MS)
+    )
+
+    return () => {
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId)
+      }
+    }
+  }, [dismissExtractionNotice, extractionNotices])
 
   const accountOptions = useMemo(() => {
     const rowAccounts = rows
@@ -638,6 +682,16 @@ export function TradeExtractor() {
               </SheetTrigger>
               <SheetContent
                 className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+                onInteractOutside={(event) => {
+                  if (isExtractionNoticeInteraction(event.target)) {
+                    event.preventDefault()
+                  }
+                }}
+                onPointerDownOutside={(event) => {
+                  if (isExtractionNoticeInteraction(event.target)) {
+                    event.preventDefault()
+                  }
+                }}
                 side="right"
               >
                 <SheetHeader className="border-b">
