@@ -48,10 +48,11 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Building2,
-  ChevronDown,
+  NotebookPen,
   Paperclip,
   Plus,
   TriangleAlert,
+  UploadCloud,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
@@ -89,69 +90,104 @@ function getErrorMessage(error: unknown) {
   return "The request failed."
 }
 
-function BrowseFilesButton() {
+function BrowseFilesButton({
+  size = "sm",
+  label = "Choose files",
+}: {
+  size?: "sm" | "default"
+  label?: string
+}) {
   const attachments = usePromptInputAttachments()
 
   return (
     <Button
       className="border-primary/20 bg-primary/5 text-primary hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
       onClick={() => attachments.openFileDialog()}
-      size="sm"
+      size={size}
       type="button"
       variant="outline"
     >
       <Paperclip className="size-4" />
-      Choose files
+      {label}
     </Button>
+  )
+}
+
+function AttachmentList() {
+  const attachments = usePromptInputAttachments()
+
+  if (attachments.files.length === 0) {
+    return null
+  }
+
+  return (
+    <Attachments variant="inline">
+      {attachments.files.map((attachment) => (
+        <Attachment
+          data={attachment}
+          key={attachment.id}
+          onRemove={() => attachments.remove(attachment.id)}
+        >
+          <AttachmentPreview />
+          <AttachmentInfo />
+          <AttachmentRemove />
+        </Attachment>
+      ))}
+    </Attachments>
   )
 }
 
 function AttachmentTray() {
   const attachments = usePromptInputAttachments()
   const fileCount = attachments.files.length
+  const hasFiles = fileCount > 0
+  const filledLabel = `Ready to add ${fileCount} ${pluralize(fileCount, "file")}.`
 
   return (
-    <div className="flex w-full flex-col gap-2">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="text-sm font-medium text-primary">
-          {fileCount === 0
-            ? "Drop screenshots or PDFs here."
-            : `Ready to add ${fileCount} ${pluralize(fileCount, "file")}.`}
-        </p>
+    <div className="flex w-full flex-col gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <UploadCloud className="size-4" />
+          </span>
+          <div className="flex flex-col">
+            <p className="text-sm font-semibold text-foreground">
+              {hasFiles ? filledLabel : "Drop screenshots or PDFs"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Drag, paste, or browse below.
+            </p>
+          </div>
+        </div>
         <BrowseFilesButton />
       </div>
-
-      {fileCount > 0 ? (
-        <Attachments variant="inline">
-          {attachments.files.map((attachment) => (
-            <Attachment
-              data={attachment}
-              key={attachment.id}
-              onRemove={() => attachments.remove(attachment.id)}
-            >
-              <AttachmentPreview />
-              <AttachmentInfo />
-              <AttachmentRemove />
-            </Attachment>
-          ))}
-        </Attachments>
-      ) : null}
+      <AttachmentList />
     </div>
   )
 }
 
+const NOTE_PLACEHOLDER =
+  "Example: ignore account summary totals and use only filled transactions."
+
 function OptionalNote() {
   return (
-    <details className="group px-4 pb-2">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1.5 text-xs text-muted-foreground hover:text-foreground">
-        <ChevronDown className="size-3 transition-transform group-open:rotate-180" />
-        Add context note
-      </summary>
-      <PromptInputTextarea
-        className="mt-1 min-h-16 text-sm"
-        placeholder="Example: ignore account summary totals and use only filled transactions."
-      />
-    </details>
+    <div className="w-full px-4 pb-3">
+      <div className="flex flex-col gap-1.5 rounded-lg border border-border/70 bg-background/60 px-3 py-2 transition-colors focus-within:border-primary/40 focus-within:bg-background">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <NotebookPen className="size-3.5 text-muted-foreground" />
+            Context note
+          </div>
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Optional
+          </span>
+        </div>
+        <PromptInputTextarea
+          className="min-h-16 w-full resize-none border-0 bg-transparent p-0 text-sm shadow-none [field-sizing:fixed] focus-visible:ring-0"
+          placeholder={NOTE_PLACEHOLDER}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -426,12 +462,17 @@ export function TradeExtractor() {
                   className="flex flex-wrap justify-start"
                   onValueChange={(value) => setSelectedAccount(value || null)}
                   size="sm"
+                  spacing={2}
                   type="single"
                   value={selectedAccount ?? ""}
                   variant="outline"
                 >
                   {accountOptions.map((account) => (
-                    <ToggleGroupItem key={account} value={account}>
+                    <ToggleGroupItem
+                      className="rounded-full border-2 data-[state=on]:border-[#007AFF] aria-pressed:border-[#007AFF]"
+                      key={account}
+                      value={account}
+                    >
                       {account}
                     </ToggleGroupItem>
                   ))}
