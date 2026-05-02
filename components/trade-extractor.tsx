@@ -14,6 +14,7 @@ import {
   PromptInputFooter,
   PromptInputHeader,
   type PromptInputMessage,
+  PromptInputProvider,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
@@ -21,7 +22,12 @@ import {
 } from "@/components/ai-elements/prompt-input"
 import { PortfolioSnapshot } from "@/components/portfolio-snapshot"
 import { TradesTable } from "@/components/trades-table"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Sheet,
@@ -31,6 +37,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { Spinner } from "@/components/ui/spinner"
 import {
   MAX_BATCH_SIZE_LABEL,
   MAX_FILE_SIZE_BYTES,
@@ -45,9 +52,12 @@ import {
   type ExtractTradesResponse,
   type TradeTableRow,
 } from "@/lib/trades/schema"
+import { cn } from "@/lib/utils"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Building2,
+  CheckCircle2,
+  CircleAlert,
   NotebookPen,
   Paperclip,
   Plus,
@@ -55,6 +65,19 @@ import {
   UploadCloud,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
+
+type ExtractionNotice = {
+  description: string
+  id: string
+  kind: "running" | "success" | "error"
+  title: string
+}
+
+type CompletedExtractionNotice = Omit<ExtractionNotice, "id" | "kind"> & {
+  kind: "success" | "error"
+}
+
+const RUNNING_EXTRACTION_NOTICE_ID = "running-extraction"
 
 const DEFAULT_ACCOUNT_OPTIONS = [
   "Firstrade",
@@ -88,6 +111,109 @@ function getErrorMessage(error: unknown) {
   }
 
   return "The request failed."
+}
+
+function formatFileList(files: PromptInputMessage["files"]) {
+  if (files.length === 0) {
+    return "No files selected"
+  }
+
+  if (files.length === 1) {
+    return files[0]?.filename ?? "1 file"
+  }
+
+  const firstFileName = files[0]?.filename ?? "first file"
+  return `${firstFileName} and ${files.length - 1} more ${pluralize(
+    files.length - 1,
+    "file"
+  )}`
+}
+
+function ExtractionNoticeCard({
+  notice,
+  onDismiss,
+  onOpenDrawer,
+}: {
+  notice: ExtractionNotice
+  onDismiss: () => void
+  onOpenDrawer: () => void
+}) {
+  const isRunning = notice.kind === "running"
+  const isSuccess = notice.kind === "success"
+  const Icon = isSuccess ? CheckCircle2 : CircleAlert
+
+  return (
+    <Alert
+      aria-live={isRunning || isSuccess ? "polite" : undefined}
+      className={cn(
+        "pointer-events-auto w-full animate-in rounded-xl border-border/70 bg-card/95 px-3 py-3 shadow-lg shadow-foreground/10 backdrop-blur-xl duration-200 fade-in-0 slide-in-from-right-3",
+        notice.kind === "error"
+          ? "border-destructive/30 text-destructive"
+          : "text-card-foreground"
+      )}
+      role={isRunning || isSuccess ? "status" : "alert"}
+      variant={notice.kind === "error" ? "destructive" : "default"}
+    >
+      {isRunning ? (
+        <Spinner className="text-primary" />
+      ) : (
+        <Icon className={cn("size-4", isSuccess && "text-primary")} />
+      )}
+      <AlertTitle>{notice.title}</AlertTitle>
+      <AlertDescription
+        className={
+          notice.kind === "error" ? undefined : "text-muted-foreground"
+        }
+      >
+        {notice.description}
+      </AlertDescription>
+      {notice.kind === "error" ? (
+        <AlertAction>
+          <Button
+            onClick={onOpenDrawer}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            Review
+          </Button>
+        </AlertAction>
+      ) : isSuccess ? (
+        <AlertAction>
+          <Button onClick={onDismiss} size="xs" type="button" variant="ghost">
+            Dismiss
+          </Button>
+        </AlertAction>
+      ) : null}
+    </Alert>
+  )
+}
+
+function ExtractionNoticeStack({
+  notices,
+  onDismiss,
+  onOpenDrawer,
+}: {
+  notices: ExtractionNotice[]
+  onDismiss: (id: string) => void
+  onOpenDrawer: () => void
+}) {
+  if (notices.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="pointer-events-none fixed top-4 right-4 left-4 z-[70] flex flex-col items-end gap-2 sm:top-5 sm:left-auto sm:w-88">
+      {notices.map((notice) => (
+        <ExtractionNoticeCard
+          key={notice.id}
+          notice={notice}
+          onDismiss={() => onDismiss(notice.id)}
+          onOpenDrawer={onOpenDrawer}
+        />
+      ))}
+    </div>
+  )
 }
 
 function BrowseFilesButton({
@@ -178,12 +304,12 @@ function OptionalNote() {
             <NotebookPen className="size-3.5 text-muted-foreground" />
             Context note
           </div>
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          <span className="text-[10px] tracking-wider text-muted-foreground uppercase">
             Optional
           </span>
         </div>
         <PromptInputTextarea
-          className="min-h-16 w-full resize-none border-0 bg-transparent p-0 text-sm shadow-none [field-sizing:fixed] focus-visible:ring-0"
+          className="[field-sizing:fixed] min-h-16 w-full resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
           placeholder={NOTE_PLACEHOLDER}
         />
       </div>
@@ -239,6 +365,10 @@ function mergeTradeRows(
   return [...rowsById.values()]
 }
 
+function getCompletedNoticeId(kind: "success" | "error") {
+  return `${kind}-${Date.now()}`
+}
+
 export function TradeExtractor() {
   const [rows, setRows] = useState<TradeTableRow[]>([])
   const [status, setStatus] = useState<ChatStatus>("ready")
@@ -246,9 +376,46 @@ export function TradeExtractor() {
   const [uploadIssue, setUploadIssue] = useState<string | null>(null)
   const [issues, setIssues] = useState<string[]>([])
   const [restoreIssue, setRestoreIssue] = useState<string | null>(null)
-  const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
+  const [extractionNotices, setExtractionNotices] = useState<
+    ExtractionNotice[]
+  >([])
+  const extractionRunning = extractionNotices.some(
+    (notice) => notice.kind === "running"
+  )
+
+  const upsertExtractionNotice = useCallback((notice: ExtractionNotice) => {
+    setExtractionNotices((currentNotices) => [
+      notice,
+      ...currentNotices.filter(
+        (currentNotice) => currentNotice.id !== notice.id
+      ),
+    ])
+  }, [])
+
+  const addCompletedExtractionNotice = useCallback(
+    (notice: CompletedExtractionNotice) => {
+      setExtractionNotices((currentNotices) =>
+        [
+          {
+            ...notice,
+            id: getCompletedNoticeId(notice.kind),
+          },
+          ...currentNotices.filter(
+            (currentNotice) => currentNotice.id !== RUNNING_EXTRACTION_NOTICE_ID
+          ),
+        ].slice(0, 3)
+      )
+    },
+    []
+  )
+
+  const dismissExtractionNotice = useCallback((id: string) => {
+    setExtractionNotices((currentNotices) =>
+      currentNotices.filter((notice) => notice.id !== id)
+    )
+  }, [])
 
   const accountOptions = useMemo(() => {
     const rowAccounts = rows
@@ -338,21 +505,28 @@ export function TradeExtractor() {
     if (!selectedAccount) {
       const issue = "Select the account these confirmations belong to."
       setUploadIssue(issue)
-      setSuccessMessage(null)
       throw new Error(issue)
     }
 
     if (message.files.length === 0) {
       const issue = "Add at least one image or PDF before submitting."
       setUploadIssue(issue)
-      setSuccessMessage(null)
       throw new Error(issue)
     }
+
+    const account = selectedAccount
+    const fileDescription = formatFileList(message.files)
 
     setStatus("submitted")
     setUploadIssue(null)
     setIssues([])
-    setSuccessMessage(null)
+    setIngestOpen(false)
+    upsertExtractionNotice({
+      description: `Reading ${fileDescription}. You can keep using the dashboard.`,
+      id: RUNNING_EXTRACTION_NOTICE_ID,
+      kind: "running",
+      title: "Extracting confirmations",
+    })
 
     try {
       const response = await fetch("/api/trades/extract", {
@@ -361,7 +535,7 @@ export function TradeExtractor() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          account: selectedAccount,
+          account,
           prompt: message.text,
           files: message.files,
         }),
@@ -398,13 +572,24 @@ export function TradeExtractor() {
 
       setRows((currentRows) => mergeTradeRows(currentRows, nextRows))
       setIssues(nextIssues)
-      setSuccessMessage(
-        `Added ${nextRows.length} confirmation ${pluralize(nextRows.length, "record")} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`
-      )
-      setIngestOpen(false)
+      addCompletedExtractionNotice({
+        description: `Added ${nextRows.length} confirmation ${pluralize(
+          nextRows.length,
+          "record"
+        )} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`,
+        kind: "success",
+        title: "Records added",
+      })
     } catch (error) {
-      setSuccessMessage(null)
-      setUploadIssue(getErrorMessage(error))
+      const issue = getErrorMessage(error)
+
+      setUploadIssue(issue)
+      addCompletedExtractionNotice({
+        description: issue,
+        kind: "error",
+        title: "Extraction failed",
+      })
+      setIngestOpen(true)
 
       throw error
     } finally {
@@ -414,6 +599,12 @@ export function TradeExtractor() {
 
   return (
     <div className="grid gap-8">
+      <ExtractionNoticeStack
+        notices={extractionNotices}
+        onDismiss={dismissExtractionNotice}
+        onOpenDrawer={() => setIngestOpen(true)}
+      />
+
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/80 px-4 py-3">
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -434,131 +625,143 @@ export function TradeExtractor() {
           </div>
         </div>
 
-        <Sheet onOpenChange={setIngestOpen} open={ingestOpen}>
-          <SheetTrigger asChild>
-            <Button>
-              <Plus data-icon="inline-start" />
-              Add confirmations
-            </Button>
-          </SheetTrigger>
-          <SheetContent
-            className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
-            side="right"
-          >
-            <SheetHeader className="border-b">
-              <SheetTitle>Add confirmations</SheetTitle>
-              <SheetDescription>
-                Select the account, upload screenshots or PDFs, then add the
-                extracted records to history.
-              </SheetDescription>
-            </SheetHeader>
-
-            <div className="flex flex-col gap-5 px-4 pb-4">
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Account
-                </span>
-                <ToggleGroup
-                  className="flex flex-wrap justify-start"
-                  onValueChange={(value) => setSelectedAccount(value || null)}
-                  size="sm"
-                  spacing={2}
-                  type="single"
-                  value={selectedAccount ?? ""}
-                  variant="outline"
-                >
-                  {accountOptions.map((account) => (
-                    <ToggleGroupItem
-                      className="rounded-full border-2 data-[state=on]:border-[#007AFF] aria-pressed:border-[#007AFF]"
-                      key={account}
-                      value={account}
-                    >
-                      {account}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-              </div>
-
-              {uploadIssue ? (
-                <Alert
-                  className="border-destructive/30 bg-destructive/5"
-                  variant="destructive"
-                >
-                  <TriangleAlert className="size-4" />
-                  <AlertTitle>
-                    {issues.length > 0
-                      ? "Review these files"
-                      : "Upload blocked"}
-                  </AlertTitle>
-                  <AlertDescription>
-                    {issues.length > 0 ? (
-                      <div className="flex flex-col gap-1">
-                        {issues.map((issue) => (
-                          <p key={issue}>{issue}</p>
-                        ))}
-                      </div>
-                    ) : (
-                      uploadIssue
-                    )}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              <PromptInput
-                accept={UPLOAD_ACCEPT}
-                inputGroupClassName="surface-upload rounded-xl border-primary/20"
-                maxFiles={MAX_FILES}
-                maxFileSize={MAX_FILE_SIZE_BYTES}
-                multiple
-                onError={(error) => {
-                  setUploadIssue(formatPromptInputError(error.code))
-                  setIssues([])
-                  setSuccessMessage(null)
-                }}
-                onSubmit={handleSubmit}
+        <div className="flex w-full flex-wrap items-center justify-end gap-3 lg:w-auto">
+          <PromptInputProvider>
+            <Sheet onOpenChange={setIngestOpen} open={ingestOpen}>
+              <SheetTrigger asChild>
+                <Button disabled={extractionRunning}>
+                  <Plus data-icon="inline-start" />
+                  {extractionRunning
+                    ? "Extraction running"
+                    : "Add confirmations"}
+                </Button>
+              </SheetTrigger>
+              <SheetContent
+                className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+                side="right"
               >
-                <PromptInputHeader className="px-4 py-4">
-                  <AttachmentTray />
-                </PromptInputHeader>
-                <PromptInputBody>
-                  <OptionalNote />
-                </PromptInputBody>
-                <PromptInputFooter className="border-t px-4 py-3">
-                  <PromptInputTools>
-                    <span className="text-xs text-muted-foreground">
-                      {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
-                      {MAX_BATCH_SIZE_LABEL} total
-                    </span>
-                  </PromptInputTools>
-                  <PromptInputSubmit
-                    className="shadow-primary-soft"
-                    disabled={status !== "ready" || !selectedAccount}
-                    size="sm"
-                    status={status}
-                  >
-                    {status === "ready" ? "Add" : "Adding..."}
-                  </PromptInputSubmit>
-                </PromptInputFooter>
-              </PromptInput>
+                <SheetHeader className="border-b">
+                  <SheetTitle>Add confirmations</SheetTitle>
+                  <SheetDescription>
+                    Select the account, upload screenshots or PDFs, then add the
+                    extracted records to history.
+                  </SheetDescription>
+                </SheetHeader>
 
-              {!selectedAccount ? (
-                <p className="text-xs text-muted-foreground">
-                  Select an account to enable adding confirmations.
-                </p>
-              ) : null}
-            </div>
-          </SheetContent>
-        </Sheet>
+                <div className="flex flex-col gap-5 px-4 pb-4">
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Account
+                    </span>
+                    <ToggleGroup
+                      className="flex flex-wrap justify-start"
+                      onValueChange={(value) =>
+                        setSelectedAccount(value || null)
+                      }
+                      size="sm"
+                      spacing={2}
+                      type="single"
+                      value={selectedAccount ?? ""}
+                      variant="outline"
+                    >
+                      {accountOptions.map((account) => (
+                        <ToggleGroupItem
+                          className="rounded-full border-2 aria-pressed:border-[#007AFF] data-[state=on]:border-[#007AFF]"
+                          key={account}
+                          value={account}
+                        >
+                          {account}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
+                  </div>
+
+                  {uploadIssue ? (
+                    <Alert
+                      className="border-destructive/30 bg-destructive/5"
+                      variant="destructive"
+                    >
+                      <TriangleAlert className="size-4" />
+                      <AlertTitle>
+                        {issues.length > 0
+                          ? "Review these files"
+                          : "Upload blocked"}
+                      </AlertTitle>
+                      <AlertDescription>
+                        {issues.length > 0 ? (
+                          <div className="flex flex-col gap-1">
+                            {issues.map((issue) => (
+                              <p key={issue}>{issue}</p>
+                            ))}
+                          </div>
+                        ) : (
+                          uploadIssue
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  <PromptInput
+                    accept={UPLOAD_ACCEPT}
+                    inputGroupClassName="surface-upload rounded-xl border-primary/20"
+                    maxFiles={MAX_FILES}
+                    maxFileSize={MAX_FILE_SIZE_BYTES}
+                    multiple
+                    onError={(error) => {
+                      setUploadIssue(formatPromptInputError(error.code))
+                      setIssues([])
+                      setExtractionNotices((currentNotices) =>
+                        currentNotices.filter(
+                          (notice) => notice.id !== RUNNING_EXTRACTION_NOTICE_ID
+                        )
+                      )
+                    }}
+                    onSubmit={handleSubmit}
+                  >
+                    <PromptInputHeader className="px-4 py-4">
+                      <AttachmentTray />
+                    </PromptInputHeader>
+                    <PromptInputBody>
+                      <OptionalNote />
+                    </PromptInputBody>
+                    <PromptInputFooter className="border-t px-4 py-3">
+                      <PromptInputTools>
+                        <span className="text-xs text-muted-foreground">
+                          {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
+                          {MAX_BATCH_SIZE_LABEL} total
+                        </span>
+                      </PromptInputTools>
+                      <PromptInputSubmit
+                        className="shadow-primary-soft"
+                        disabled={status !== "ready" || !selectedAccount}
+                        size="sm"
+                        status={status}
+                      >
+                        {status === "ready" ? "Add" : "Adding..."}
+                      </PromptInputSubmit>
+                    </PromptInputFooter>
+                  </PromptInput>
+
+                  {!selectedAccount ? (
+                    <p className="text-xs text-muted-foreground">
+                      Select an account to enable adding confirmations.
+                    </p>
+                  ) : null}
+                </div>
+              </SheetContent>
+            </Sheet>
+          </PromptInputProvider>
+        </div>
       </section>
 
       <PortfolioSnapshot rows={rows} />
 
       <TradesTable
-        issues={successMessage ? issues : []}
+        issues={issues}
         onDelete={handleDeleteTrade}
         restoreIssue={deleteIssue ?? restoreIssue}
         rows={rows}
-        successMessage={successMessage}
+        successMessage={null}
       />
     </div>
   )
