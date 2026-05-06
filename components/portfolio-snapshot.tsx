@@ -1,13 +1,31 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react"
 import { Cell, Pie, PieChart } from "recharts"
-import { CircleAlert, RefreshCcw } from "lucide-react"
+import { CircleAlert, Pencil, RefreshCcw } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 import {
   Table,
   TableBody,
@@ -17,8 +35,12 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
+  exposureProfileResponseSchema,
   exposureProfilesResponseSchema,
+  getExposureProfileKey,
+  type ExposureDirection,
   type InstrumentExposureProfile,
+  type UpsertInstrumentExposureProfile,
 } from "@/lib/portfolio/exposure-profiles"
 import {
   aggregateHoldings,
@@ -35,6 +57,7 @@ import {
   type FxRateSnapshot,
   type PreviousCloseLookupTarget,
   type PreviousCloseQuote,
+  type SupportedMarket,
 } from "@/lib/portfolio/schema"
 import type { TradeTableRow } from "@/lib/trades/schema"
 import { cn } from "@/lib/utils"
@@ -61,6 +84,8 @@ const CHART_COLORS = [
   "oklch(0.62 0.16 15)",
 ]
 const MARKET_DATA_TIMEOUT_MS = 15_000
+const MARKET_OPTIONS: SupportedMarket[] = ["US", "TW"]
+const EXPOSURE_DIRECTION_OPTIONS: ExposureDirection[] = ["long", "inverse"]
 
 const chartConfig = {
   value: {
@@ -136,6 +161,44 @@ function formatPercent(value: number | null) {
   }
 
   return percentFormatter.format(value)
+}
+
+function formatMultiplier(value: number) {
+  const absoluteValue = Math.abs(value)
+
+  if (Number.isInteger(absoluteValue)) {
+    return absoluteValue.toString()
+  }
+
+  return absoluteValue.toFixed(2).replace(/\.?0+$/, "")
+}
+
+function getExposureProfileTicker(holding: SnapshotHolding) {
+  return (holding.quoteTicker ?? holding.ticker).trim().toUpperCase()
+}
+
+function formatExposureLabel(holding: SnapshotHolding) {
+  const prefix = holding.exposureDirection === "inverse" ? "-" : ""
+
+  return `${prefix}${formatMultiplier(holding.effectiveMultiplier)}x ${
+    holding.exposureUnderlyingTicker
+  }`
+}
+
+function getExposureProfileSourceLabel(holding: SnapshotHolding) {
+  if (!holding.exposureProfileSource) {
+    return "Default"
+  }
+
+  if (holding.exposureProfileSource === "user") {
+    return "Custom"
+  }
+
+  if (holding.exposureProfileSource === "seed") {
+    return "Seed"
+  }
+
+  return holding.exposureProfileSource
 }
 
 function formatDate(value: string | null) {
@@ -262,6 +325,27 @@ async function fetchExposureProfiles(signal: AbortSignal) {
   }
 
   return parsed.data.profiles
+}
+
+async function saveExposureProfile(profile: UpsertInstrumentExposureProfile) {
+  const response = await fetch("/api/portfolio/exposure-profiles", {
+    body: JSON.stringify(profile),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response))
+  }
+
+  const payload = await response.json()
+  const parsed = exposureProfileResponseSchema.safeParse(payload)
+
+  if (!parsed.success) {
+    throw new Error("The server returned an unexpected exposure response.")
+  }
+
+  return parsed.data.profile
 }
 
 function buildQuoteTargets(
@@ -548,17 +632,288 @@ function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
   )
 }
 
-function HoldingsPanel({ holdings }: { holdings: SnapshotHolding[] }) {
+function ExposureProfileEditor({
+  holding,
+  onSave,
+}: {
+  holding: SnapshotHolding
+  onSave: (
+    profile: UpsertInstrumentExposureProfile
+  ) => Promise<InstrumentExposureProfile>
+}) {
+  const profileTicker = getExposureProfileTicker(holding)
+  const [open, setOpen] = useState(false)
+  const [underlyingTicker, setUnderlyingTicker] = useState(
+    holding.exposureUnderlyingTicker
+  )
+  const [underlyingMarket, setUnderlyingMarket] = useState<SupportedMarket>(
+    holding.exposureUnderlyingMarket
+  )
+  const [exposureMultiplier, setExposureMultiplier] = useState(
+    formatMultiplier(holding.effectiveMultiplier)
+  )
+  const [exposureDirection, setExposureDirection] = useState<ExposureDirection>(
+    holding.exposureDirection
+  )
+  const [saveStatus, setSaveStatus] = useState<LoadStatus>("idle")
+  const [saveIssue, setSaveIssue] = useState<string | null>(null)
+
+  function resetForm() {
+    setUnderlyingTicker(holding.exposureUnderlyingTicker)
+    setUnderlyingMarket(holding.exposureUnderlyingMarket)
+    setExposureMultiplier(formatMultiplier(holding.effectiveMultiplier))
+    setExposureDirection(holding.exposureDirection)
+    setSaveIssue(null)
+    setSaveStatus("idle")
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      resetForm()
+    } else {
+      setSaveIssue(null)
+      setSaveStatus("idle")
+    }
+
+    setOpen(nextOpen)
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    const trimmedUnderlyingTicker = underlyingTicker.trim().toUpperCase()
+    const parsedMultiplier = Number(exposureMultiplier)
+
+    if (!trimmedUnderlyingTicker) {
+      setSaveIssue("Enter an underlying ticker.")
+      return
+    }
+
+    if (!Number.isFinite(parsedMultiplier) || parsedMultiplier <= 0) {
+      setSaveIssue("Enter a positive exposure multiple.")
+      return
+    }
+
+    setSaveStatus("loading")
+    setSaveIssue(null)
+
+    try {
+      await onSave({
+        exposureDirection,
+        exposureMultiplier: parsedMultiplier,
+        instrumentName: `${profileTicker} exposure profile`,
+        market: holding.market,
+        notes: "Set from holdings panel.",
+        source: "user",
+        ticker: profileTicker,
+        underlyingMarket,
+        underlyingTicker: trimmedUnderlyingTicker,
+      })
+      setSaveStatus("ready")
+      setOpen(false)
+    } catch (error) {
+      setSaveIssue(getErrorMessage(error))
+      setSaveStatus("error")
+    }
+  }
+
+  return (
+    <Sheet onOpenChange={handleOpenChange} open={open}>
+      <SheetTrigger asChild>
+        <Button
+          aria-label={`Edit exposure profile for ${profileTicker}`}
+          className="text-muted-foreground hover:text-foreground"
+          size="icon-xs"
+          type="button"
+          variant="ghost"
+        >
+          <Pencil className="size-3" />
+        </Button>
+      </SheetTrigger>
+      <SheetContent
+        className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-sm"
+        side="right"
+      >
+        <SheetHeader className="border-b">
+          <SheetTitle>{profileTicker} exposure</SheetTitle>
+          <SheetDescription>
+            Override the multiple and underlying used in gross exposure.
+          </SheetDescription>
+        </SheetHeader>
+
+        <form
+          className="flex flex-1 flex-col gap-5 px-4 pb-4"
+          onSubmit={handleSubmit}
+        >
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              Profile type
+            </span>
+            <Badge
+              variant={
+                holding.exposureProfileSource === "user"
+                  ? "secondary"
+                  : "outline"
+              }
+            >
+              {getExposureProfileSourceLabel(holding)}
+            </Badge>
+          </div>
+
+          <div className="grid gap-4">
+            <div className="grid gap-1.5">
+              <label
+                className="text-xs font-medium text-muted-foreground"
+                htmlFor={`${holding.key}-underlying-ticker`}
+              >
+                Underlying ticker
+              </label>
+              <Input
+                autoComplete="off"
+                id={`${holding.key}-underlying-ticker`}
+                onChange={(event) => setUnderlyingTicker(event.target.value)}
+                placeholder={profileTicker}
+                value={underlyingTicker}
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label
+                className="text-xs font-medium text-muted-foreground"
+                htmlFor={`${holding.key}-underlying-market`}
+              >
+                Underlying market
+              </label>
+              <Select
+                onValueChange={(value) =>
+                  setUnderlyingMarket(value as SupportedMarket)
+                }
+                value={underlyingMarket}
+              >
+                <SelectTrigger
+                  className="w-full"
+                  id={`${holding.key}-underlying-market`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MARKET_OPTIONS.map((market) => (
+                    <SelectItem key={market} value={market}>
+                      {market}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
+              <div className="grid gap-1.5">
+                <label
+                  className="text-xs font-medium text-muted-foreground"
+                  htmlFor={`${holding.key}-exposure-multiple`}
+                >
+                  Multiple
+                </label>
+                <Input
+                  id={`${holding.key}-exposure-multiple`}
+                  inputMode="decimal"
+                  min="0.01"
+                  onChange={(event) =>
+                    setExposureMultiplier(event.target.value)
+                  }
+                  step="0.01"
+                  type="number"
+                  value={exposureMultiplier}
+                />
+              </div>
+
+              <div className="grid gap-1.5">
+                <label
+                  className="text-xs font-medium text-muted-foreground"
+                  htmlFor={`${holding.key}-exposure-direction`}
+                >
+                  Direction
+                </label>
+                <Select
+                  onValueChange={(value) =>
+                    setExposureDirection(value as ExposureDirection)
+                  }
+                  value={exposureDirection}
+                >
+                  <SelectTrigger
+                    className="w-full"
+                    id={`${holding.key}-exposure-direction`}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EXPOSURE_DIRECTION_OPTIONS.map((direction) => (
+                      <SelectItem key={direction} value={direction}>
+                        {direction === "long" ? "Long" : "Inverse"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {saveIssue ? (
+            <Alert
+              className="border-destructive/30 bg-destructive/5"
+              variant="destructive"
+            >
+              <CircleAlert className="size-4" />
+              <AlertTitle>Exposure not saved</AlertTitle>
+              <AlertDescription>{saveIssue}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <SheetFooter className="mt-auto border-t px-0 pb-0">
+            <Button disabled={saveStatus === "loading"} type="submit">
+              {saveStatus === "loading" ? "Saving..." : "Save profile"}
+            </Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function HoldingsPanel({
+  holdings,
+  onSaveExposureProfile,
+}: {
+  holdings: SnapshotHolding[]
+  onSaveExposureProfile: (
+    profile: UpsertInstrumentExposureProfile
+  ) => Promise<InstrumentExposureProfile>
+}) {
   const visibleHoldings = holdings.slice(0, 8)
   const hiddenCount = holdings.length - visibleHoldings.length
+  const [editingExposure, setEditingExposure] = useState(false)
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm">
-      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-        <h3 className="text-sm font-semibold">Holdings</h3>
-        <span className="text-xs text-muted-foreground">
-          Value (USD) and weight
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+        <div className="grid gap-0.5">
+          <h3 className="text-sm font-semibold">Holdings</h3>
+          <span className="text-xs text-muted-foreground">
+            Value (USD), weight, and exposure
+          </span>
+        </div>
+        <ButtonGroup>
+          <Button
+            aria-label="Toggle exposure editing"
+            aria-pressed={editingExposure}
+            onClick={() => setEditingExposure((current) => !current)}
+            size="icon-xs"
+            type="button"
+            variant={editingExposure ? "secondary" : "outline"}
+          >
+            <Pencil className="size-3" />
+          </Button>
+        </ButtonGroup>
       </div>
       <Table>
         <TableHeader>
@@ -589,6 +944,26 @@ function HoldingsPanel({ holdings }: { holdings: SnapshotHolding[] }) {
                           .filter(Boolean)
                           .join(" - ")}
                       </span>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <Badge
+                          className="max-w-full justify-start"
+                          variant={
+                            holding.exposureProfileSource === "user"
+                              ? "secondary"
+                              : "outline"
+                          }
+                        >
+                          <span className="truncate">
+                            {formatExposureLabel(holding)}
+                          </span>
+                        </Badge>
+                        {editingExposure ? (
+                          <ExposureProfileEditor
+                            holding={holding}
+                            onSave={onSaveExposureProfile}
+                          />
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </TableCell>
@@ -682,6 +1057,47 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
     quoteStatus === "loading" ||
     effectiveFxStatus === "loading" ||
     profileStatus === "loading"
+
+  const handleSaveExposureProfile = useCallback(
+    async (profile: UpsertInstrumentExposureProfile) => {
+      const savedProfile = await saveExposureProfile(profile)
+      const savedKey = getExposureProfileKey({
+        market: savedProfile.market,
+        ticker: savedProfile.ticker,
+      })
+
+      setExposureProfiles((currentProfiles) => {
+        const nextProfilesByKey = new Map(
+          currentProfiles.map((currentProfile) => [
+            getExposureProfileKey({
+              market: currentProfile.market,
+              ticker: currentProfile.ticker,
+            }),
+            currentProfile,
+          ])
+        )
+
+        nextProfilesByKey.set(savedKey, savedProfile)
+
+        return [...nextProfilesByKey.values()].sort((left, right) =>
+          getExposureProfileKey({
+            market: left.market,
+            ticker: left.ticker,
+          }).localeCompare(
+            getExposureProfileKey({
+              market: right.market,
+              ticker: right.ticker,
+            })
+          )
+        )
+      })
+      setProfileIssue(null)
+      setProfileStatus("ready")
+
+      return savedProfile
+    },
+    []
+  )
 
   useEffect(() => {
     if (quoteTargets.length === 0) {
@@ -874,7 +1290,10 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]">
         <AllocationPanel snapshot={snapshot} />
         <div className="grid content-start gap-4">
-          <HoldingsPanel holdings={snapshot.holdings} />
+          <HoldingsPanel
+            holdings={snapshot.holdings}
+            onSaveExposureProfile={handleSaveExposureProfile}
+          />
         </div>
       </div>
     </section>

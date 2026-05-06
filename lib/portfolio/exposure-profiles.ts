@@ -28,6 +28,10 @@ export const exposureProfilesResponseSchema = z.object({
   profiles: z.array(instrumentExposureProfileSchema),
 })
 
+export const exposureProfileResponseSchema = z.object({
+  profile: instrumentExposureProfileSchema,
+})
+
 export type ExposureDirection = z.infer<typeof exposureDirectionSchema>
 export type InstrumentExposureProfile = z.infer<
   typeof instrumentExposureProfileSchema
