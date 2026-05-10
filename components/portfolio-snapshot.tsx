@@ -926,6 +926,8 @@ function HoldingsPanel({
         <TableBody>
           {visibleHoldings.map((holding, index) => {
             const label = getHoldingLabel(holding)
+            const showExposureBadge =
+              Math.abs(holding.effectiveMultiplier) !== 1
 
             return (
               <TableRow key={holding.key}>
@@ -936,27 +938,24 @@ function HoldingsPanel({
                       style={{ backgroundColor: getColor(index) }}
                     />
                     <div className="grid min-w-0 gap-0.5">
-                      <span className="truncate font-medium">
-                        {label.primary}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {[label.secondary, getHoldingSubtitle(holding)]
-                          .filter(Boolean)
-                          .join(" - ")}
-                      </span>
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <Badge
-                          className="max-w-full justify-start"
-                          variant={
-                            holding.exposureProfileSource === "user"
-                              ? "secondary"
-                              : "outline"
-                          }
-                        >
-                          <span className="truncate">
-                            {formatExposureLabel(holding)}
-                          </span>
-                        </Badge>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate font-medium">
+                          {label.primary}
+                        </span>
+                        {showExposureBadge ? (
+                          <Badge
+                            className="max-w-[8rem] shrink-0 justify-start"
+                            variant={
+                              holding.exposureProfileSource === "user"
+                                ? "secondary"
+                                : "outline"
+                            }
+                          >
+                            <span className="truncate">
+                              {formatExposureLabel(holding)}
+                            </span>
+                          </Badge>
+                        ) : null}
                         {editingExposure ? (
                           <ExposureProfileEditor
                             holding={holding}
@@ -964,6 +963,11 @@ function HoldingsPanel({
                           />
                         ) : null}
                       </div>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {[label.secondary, getHoldingSubtitle(holding)]
+                          .filter(Boolean)
+                          .join(" - ")}
+                      </span>
                     </div>
                   </div>
                 </TableCell>
