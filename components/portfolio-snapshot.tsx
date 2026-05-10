@@ -1,6 +1,13 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react"
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { Cell, Pie, PieChart } from "recharts"
 import { CircleAlert, Pencil, RefreshCcw } from "lucide-react"
 
@@ -9,6 +16,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -72,6 +84,15 @@ type AllocationDatum = {
   ticker: string
   value: number
   weight: number
+}
+
+type MergedHoldingAccount = {
+  account: string
+  marketValueUsd: number | null
+}
+
+type MergedSnapshotHolding = SnapshotHolding & {
+  accountBreakdown: MergedHoldingAccount[]
 }
 
 const CHART_COLORS = [
@@ -377,8 +398,126 @@ function getHoldingLabel(holding: SnapshotHolding) {
   }
 }
 
-function getHoldingSubtitle(holding: SnapshotHolding) {
-  return [holding.account, holding.market].filter(Boolean).join(" - ")
+function roundDisplayNumber(value: number) {
+  return Number(value.toFixed(10))
+}
+
+function sumNullableValues(values: Array<number | null>) {
+  let total = 0
+
+  for (const value of values) {
+    if (value === null) {
+      return null
+    }
+
+    total += value
+  }
+
+  return roundDisplayNumber(total)
+}
+
+function compareMergedHoldings(
+  left: MergedSnapshotHolding,
+  right: MergedSnapshotHolding
+) {
+  if (left.weight !== null && right.weight !== null) {
+    return right.weight - left.weight
+  }
+
+  if (left.effectiveValueUsd !== null && right.effectiveValueUsd !== null) {
+    return right.effectiveValueUsd - left.effectiveValueUsd
+  }
+
+  if (left.effectiveValueUsd !== null) {
+    return -1
+  }
+
+  if (right.effectiveValueUsd !== null) {
+    return 1
+  }
+
+  return getExposureProfileTicker(left).localeCompare(
+    getExposureProfileTicker(right)
+  )
+}
+
+function mergeHoldingAccounts(holdings: SnapshotHolding[]) {
+  const accounts = new Map<string, MergedHoldingAccount>()
+
+  for (const holding of holdings) {
+    const account = holding.account ?? "Unassigned account"
+    const existing = accounts.get(account)
+
+    accounts.set(account, {
+      account,
+      marketValueUsd:
+        existing === undefined
+          ? holding.marketValueUsd
+          : sumNullableValues([
+              existing.marketValueUsd,
+              holding.marketValueUsd,
+            ]),
+    })
+  }
+
+  return [...accounts.values()].sort((left, right) => {
+    if (left.marketValueUsd !== null && right.marketValueUsd !== null) {
+      return right.marketValueUsd - left.marketValueUsd
+    }
+
+    if (left.marketValueUsd !== null) {
+      return -1
+    }
+
+    if (right.marketValueUsd !== null) {
+      return 1
+    }
+
+    return left.account.localeCompare(right.account)
+  })
+}
+
+function mergeSnapshotHoldings(holdings: SnapshotHolding[]) {
+  const groups = new Map<string, SnapshotHolding[]>()
+
+  for (const holding of holdings) {
+    const key = `${holding.market}:${getExposureProfileTicker(holding)}`
+    const existing = groups.get(key)
+
+    if (existing) {
+      existing.push(holding)
+    } else {
+      groups.set(key, [holding])
+    }
+  }
+
+  return [...groups.values()]
+    .map<MergedSnapshotHolding>((group) => {
+      const [representative] = group
+      const marketValueUsd = sumNullableValues(
+        group.map((holding) => holding.marketValueUsd)
+      )
+      const effectiveValueUsd = sumNullableValues(
+        group.map((holding) => holding.effectiveValueUsd)
+      )
+
+      return {
+        ...representative,
+        account: null,
+        accountBreakdown: mergeHoldingAccounts(group),
+        effectiveValueUsd,
+        key: `${representative.market}:${getExposureProfileTicker(representative)}`,
+        marketValue: sumNullableValues(
+          group.map((holding) => holding.marketValue)
+        ),
+        marketValueUsd,
+        quantityOpen: roundDisplayNumber(
+          group.reduce((total, holding) => total + holding.quantityOpen, 0)
+        ),
+        weight: sumNullableValues(group.map((holding) => holding.weight)),
+      }
+    })
+    .sort(compareMergedHoldings)
 }
 
 function AllocationTooltip({
@@ -889,9 +1028,44 @@ function HoldingsPanel({
     profile: UpsertInstrumentExposureProfile
   ) => Promise<InstrumentExposureProfile>
 }) {
-  const visibleHoldings = holdings.slice(0, 8)
-  const hiddenCount = holdings.length - visibleHoldings.length
   const [editingExposure, setEditingExposure] = useState(false)
+  const [hoveredHoldingKey, setHoveredHoldingKey] = useState<string | null>(
+    null
+  )
+  const [isHoldingsScrollbarVisible, setIsHoldingsScrollbarVisible] =
+    useState(false)
+  const scrollbarVisibilityTimeout = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null)
+  const scrollbarVisibleRef = useRef(false)
+  const handleHoldingsScroll = useCallback(() => {
+    if (!scrollbarVisibleRef.current) {
+      scrollbarVisibleRef.current = true
+      setIsHoldingsScrollbarVisible(true)
+    }
+
+    if (scrollbarVisibilityTimeout.current) {
+      clearTimeout(scrollbarVisibilityTimeout.current)
+    }
+
+    scrollbarVisibilityTimeout.current = setTimeout(() => {
+      scrollbarVisibleRef.current = false
+      setIsHoldingsScrollbarVisible(false)
+    }, 700)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (scrollbarVisibilityTimeout.current) {
+        clearTimeout(scrollbarVisibilityTimeout.current)
+      }
+    },
+    []
+  )
+  const mergedHoldings = useMemo(
+    () => mergeSnapshotHoldings(holdings),
+    [holdings]
+  )
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm">
@@ -915,8 +1089,18 @@ function HoldingsPanel({
           </Button>
         </ButtonGroup>
       </div>
-      <Table>
-        <TableHeader>
+      <Table
+        containerClassName={cn(
+          "holdings-scrollbar max-h-[28rem] overflow-y-auto",
+          isHoldingsScrollbarVisible && "holdings-scrollbar-visible"
+        )}
+        containerProps={{
+          "aria-label": "Holdings list",
+          onScroll: handleHoldingsScroll,
+          tabIndex: 0,
+        }}
+      >
+        <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
           <TableRow>
             <TableHead>Holding</TableHead>
             <TableHead className="text-right">Value</TableHead>
@@ -924,52 +1108,65 @@ function HoldingsPanel({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {visibleHoldings.map((holding, index) => {
+          {mergedHoldings.map((holding, index) => {
             const label = getHoldingLabel(holding)
             const showExposureBadge =
               Math.abs(holding.effectiveMultiplier) !== 1
 
             return (
-              <TableRow key={holding.key}>
+              <TableRow
+                className="group/holding-row"
+                key={holding.key}
+                onMouseEnter={() => setHoveredHoldingKey(holding.key)}
+                onMouseLeave={() =>
+                  setHoveredHoldingKey((current) =>
+                    current === holding.key ? null : current
+                  )
+                }
+              >
                 <TableCell>
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span
-                      className="size-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: getColor(index) }}
-                    />
-                    <div className="grid min-w-0 gap-0.5">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 truncate font-medium">
-                          {label.primary}
-                        </span>
-                        {showExposureBadge ? (
-                          <Badge
-                            className="max-w-[8rem] shrink-0 justify-start"
-                            variant={
-                              holding.exposureProfileSource === "user"
-                                ? "secondary"
-                                : "outline"
-                            }
-                          >
-                            <span className="truncate">
-                              {formatExposureLabel(holding)}
-                            </span>
-                          </Badge>
-                        ) : null}
-                        {editingExposure ? (
-                          <ExposureProfileEditor
-                            holding={holding}
-                            onSave={onSaveExposureProfile}
-                          />
-                        ) : null}
+                  <HoverCard open={hoveredHoldingKey === holding.key}>
+                    <HoverCardTrigger asChild>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span
+                          className="size-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: getColor(index) }}
+                        />
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 truncate font-medium">
+                            {label.primary}
+                          </span>
+                          {showExposureBadge ? (
+                            <Badge
+                              className="max-w-[8rem] shrink-0 justify-start"
+                              variant={
+                                holding.exposureProfileSource === "user"
+                                  ? "secondary"
+                                  : "outline"
+                              }
+                            >
+                              <span className="truncate">
+                                {formatExposureLabel(holding)}
+                              </span>
+                            </Badge>
+                          ) : null}
+                          {editingExposure ? (
+                            <ExposureProfileEditor
+                              holding={holding}
+                              onSave={onSaveExposureProfile}
+                            />
+                          ) : null}
+                        </div>
                       </div>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {[label.secondary, getHoldingSubtitle(holding)]
-                          .filter(Boolean)
-                          .join(" - ")}
-                      </span>
-                    </div>
-                  </div>
+                    </HoverCardTrigger>
+                    <HoverCardContent
+                      align="start"
+                      className="w-72"
+                      side="bottom"
+                    >
+                      <HoldingAccountBreakdown holding={holding} />
+                    </HoverCardContent>
+                  </HoverCard>
                 </TableCell>
                 <TableCell className="text-right font-medium tabular-nums">
                   {formatUsd(holding.marketValueUsd)}
@@ -980,13 +1177,6 @@ function HoldingsPanel({
               </TableRow>
             )
           })}
-          {hiddenCount > 0 ? (
-            <TableRow>
-              <TableCell className="text-xs text-muted-foreground" colSpan={3}>
-                {hiddenCount} more holdings in confirmation history.
-              </TableCell>
-            </TableRow>
-          ) : null}
         </TableBody>
       </Table>
     </div>
@@ -1015,6 +1205,42 @@ function SnapshotStatusBadge({
   }
 
   return <Badge variant="outline">Market data pending</Badge>
+}
+
+function HoldingAccountBreakdown({
+  holding,
+}: {
+  holding: MergedSnapshotHolding
+}) {
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <p className="truncate text-sm font-medium">
+          {getExposureProfileTicker(holding)}
+        </p>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {holding.accountBreakdown.length}{" "}
+          {holding.accountBreakdown.length === 1 ? "account" : "accounts"}
+        </span>
+      </div>
+
+      <div className="grid gap-1">
+        {holding.accountBreakdown.map((account) => (
+          <div
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md bg-muted/35 px-2 py-1.5 text-xs"
+            key={account.account}
+          >
+            <span className="truncate text-muted-foreground">
+              {account.account}
+            </span>
+            <span className="font-medium tabular-nums">
+              {formatUsd(account.marketValueUsd)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
