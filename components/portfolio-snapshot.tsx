@@ -75,6 +75,7 @@ import type { TradeTableRow } from "@/lib/trades/schema"
 import { cn } from "@/lib/utils"
 
 type LoadStatus = "idle" | "loading" | "ready" | "error"
+type BaseCurrency = "USD" | "TWD"
 
 type AllocationDatum = {
   fill: string
@@ -127,6 +128,18 @@ const preciseUsdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
 })
 
+const twdFormatter = new Intl.NumberFormat("zh-TW", {
+  currency: "TWD",
+  maximumFractionDigits: 0,
+  style: "currency",
+})
+
+const preciseTwdFormatter = new Intl.NumberFormat("zh-TW", {
+  currency: "TWD",
+  maximumFractionDigits: 2,
+  style: "currency",
+})
+
 const percentFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
   minimumFractionDigits: 1,
@@ -160,20 +173,56 @@ function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError"
 }
 
-function formatUsd(value: number | null) {
-  if (value === null) {
-    return "-"
+function convertUsdToBase(
+  usdValue: number | null,
+  baseCurrency: BaseCurrency,
+  fxRate: number | null
+) {
+  if (usdValue === null) {
+    return null
   }
 
-  return usdFormatter.format(value)
+  if (baseCurrency === "USD") {
+    return usdValue
+  }
+
+  if (fxRate === null) {
+    return null
+  }
+
+  return usdValue * fxRate
 }
 
-function formatPreciseUsd(value: number | null) {
+function formatBase(
+  usdValue: number | null,
+  baseCurrency: BaseCurrency,
+  fxRate: number | null
+) {
+  const value = convertUsdToBase(usdValue, baseCurrency, fxRate)
+
   if (value === null) {
     return "-"
   }
 
-  return preciseUsdFormatter.format(value)
+  return baseCurrency === "USD"
+    ? usdFormatter.format(value)
+    : twdFormatter.format(value)
+}
+
+function formatPreciseBase(
+  usdValue: number | null,
+  baseCurrency: BaseCurrency,
+  fxRate: number | null
+) {
+  const value = convertUsdToBase(usdValue, baseCurrency, fxRate)
+
+  if (value === null) {
+    return "-"
+  }
+
+  return baseCurrency === "USD"
+    ? preciseUsdFormatter.format(value)
+    : preciseTwdFormatter.format(value)
 }
 
 function formatPercent(value: number | null) {
@@ -522,9 +571,13 @@ function mergeSnapshotHoldings(holdings: SnapshotHolding[]) {
 
 function AllocationTooltip({
   active,
+  baseCurrency,
+  fxRate,
   payload,
 }: {
   active?: boolean
+  baseCurrency: BaseCurrency
+  fxRate: number | null
   payload?: Array<{ payload: AllocationDatum }>
 }) {
   if (!active || !payload?.length) {
@@ -545,13 +598,13 @@ function AllocationTooltip({
       <div className="flex justify-between gap-4 text-muted-foreground">
         <span>Effective</span>
         <span className="font-medium text-foreground tabular-nums">
-          {formatPreciseUsd(datum.value)}
+          {formatPreciseBase(datum.value, baseCurrency, fxRate)}
         </span>
       </div>
       <div className="flex justify-between gap-4 text-muted-foreground">
         <span>Capital</span>
         <span className="font-medium text-foreground tabular-nums">
-          {formatPreciseUsd(datum.marketValue)}
+          {formatPreciseBase(datum.marketValue, baseCurrency, fxRate)}
         </span>
       </div>
       <div className="flex justify-between gap-4 text-muted-foreground">
@@ -657,7 +710,15 @@ function SnapshotAlert({
   )
 }
 
-function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
+function AllocationPanel({
+  baseCurrency,
+  fxRate,
+  snapshot,
+}: {
+  baseCurrency: BaseCurrency
+  fxRate: number | null
+  snapshot: CurrentPortfolioSnapshot
+}) {
   const chartData = snapshot.exposureGroups
     .filter((group) => group.weight !== null)
     .map<AllocationDatum>((group, index) => ({
@@ -694,7 +755,7 @@ function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
           </div>
         </div>
         <div className="text-4xl font-semibold tracking-tight text-foreground tabular-nums sm:text-5xl">
-          {formatUsd(snapshot.totalUsd)}
+          {formatBase(snapshot.totalUsd, baseCurrency, fxRate)}
         </div>
       </div>
 
@@ -709,7 +770,12 @@ function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
                 <PieChart>
                   <ChartTooltip
                     allowEscapeViewBox={{ x: true, y: true }}
-                    content={<AllocationTooltip />}
+                    content={
+                      <AllocationTooltip
+                        baseCurrency={baseCurrency}
+                        fxRate={fxRate}
+                      />
+                    }
                     cursor={false}
                     position={{ x: 12, y: 12 }}
                     wrapperStyle={{ zIndex: 30 }}
@@ -1019,9 +1085,13 @@ function ExposureProfileEditor({
 }
 
 function HoldingsPanel({
+  baseCurrency,
+  fxRate,
   holdings,
   onSaveExposureProfile,
 }: {
+  baseCurrency: BaseCurrency
+  fxRate: number | null
   holdings: SnapshotHolding[]
   onSaveExposureProfile: (
     profile: UpsertInstrumentExposureProfile
@@ -1072,7 +1142,7 @@ function HoldingsPanel({
         <div className="grid gap-0.5">
           <h3 className="text-sm font-semibold">Holdings</h3>
           <span className="text-xs text-muted-foreground">
-            Value (USD), weight, and exposure
+            Value ({baseCurrency}), weight, and exposure
           </span>
         </div>
         <ButtonGroup>
@@ -1163,12 +1233,16 @@ function HoldingsPanel({
                       className="w-72"
                       side="bottom"
                     >
-                      <HoldingAccountBreakdown holding={holding} />
+                      <HoldingAccountBreakdown
+                        baseCurrency={baseCurrency}
+                        fxRate={fxRate}
+                        holding={holding}
+                      />
                     </HoverCardContent>
                   </HoverCard>
                 </TableCell>
                 <TableCell className="text-right font-medium tabular-nums">
-                  {formatUsd(holding.marketValueUsd)}
+                  {formatBase(holding.marketValueUsd, baseCurrency, fxRate)}
                 </TableCell>
                 <TableCell className="text-right text-muted-foreground tabular-nums">
                   {formatPercent(holding.weight)}
@@ -1207,8 +1281,12 @@ function SnapshotStatusBadge({
 }
 
 function HoldingAccountBreakdown({
+  baseCurrency,
+  fxRate,
   holding,
 }: {
+  baseCurrency: BaseCurrency
+  fxRate: number | null
   holding: MergedSnapshotHolding
 }) {
   return (
@@ -1233,7 +1311,7 @@ function HoldingAccountBreakdown({
               {account.account}
             </span>
             <span className="font-medium tabular-nums">
-              {formatUsd(account.marketValueUsd)}
+              {formatBase(account.marketValueUsd, baseCurrency, fxRate)}
             </span>
           </div>
         ))}
@@ -1257,6 +1335,7 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
   const [profileStatus, setProfileStatus] = useState<LoadStatus>("idle")
   const [profileIssue, setProfileIssue] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
+  const [baseCurrency, setBaseCurrency] = useState<BaseCurrency>("USD")
 
   const aggregated = useMemo(() => aggregateHoldings(rows), [rows])
   const quoteTargets = useMemo(
@@ -1376,8 +1455,10 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
     }
   }, [quoteTargets, refreshIndex])
 
+  const needsFxRate = hasTwdHoldings || baseCurrency === "TWD"
+
   useEffect(() => {
-    if (!hasTwdHoldings) {
+    if (!needsFxRate) {
       return
     }
 
@@ -1419,7 +1500,7 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
       window.clearTimeout(timeoutId)
       controller.abort()
     }
-  }, [hasTwdHoldings, refreshIndex])
+  }, [needsFxRate, refreshIndex])
 
   useEffect(() => {
     if (aggregated.holdings.length === 0) {
@@ -1474,9 +1555,6 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
           >
             Current portfolio
           </h2>
-          <p className="hidden max-w-2xl text-sm text-muted-foreground sm:block">
-            Latest EOD prices with USD/TWD conversion when needed.
-          </p>
         </div>
 
         <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
@@ -1485,7 +1563,22 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
             hasTwdHoldings={hasTwdHoldings}
             quoteStatus={quoteStatus}
           />
-          <Badge variant="outline">Base USD</Badge>
+          <Button
+            aria-label={`Switch base currency (currently ${baseCurrency})`}
+            aria-pressed={baseCurrency === "TWD"}
+            disabled={
+              baseCurrency === "USD" &&
+              (fxSnapshot === null || fxStatus === "error")
+            }
+            onClick={() =>
+              setBaseCurrency((current) => (current === "USD" ? "TWD" : "USD"))
+            }
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Base {baseCurrency}
+          </Button>
           <Button
             disabled={isLoading || quoteTargets.length === 0}
             onClick={() => setRefreshIndex((current) => current + 1)}
@@ -1517,9 +1610,15 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]">
-        <AllocationPanel snapshot={snapshot} />
+        <AllocationPanel
+          baseCurrency={baseCurrency}
+          fxRate={fxSnapshot?.rate ?? null}
+          snapshot={snapshot}
+        />
         <div className="grid content-start gap-4">
           <HoldingsPanel
+            baseCurrency={baseCurrency}
+            fxRate={fxSnapshot?.rate ?? null}
             holdings={snapshot.holdings}
             onSaveExposureProfile={handleSaveExposureProfile}
           />
