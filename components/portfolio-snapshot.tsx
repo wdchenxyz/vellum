@@ -555,7 +555,7 @@ function AllocationTooltip({
         </span>
       </div>
       <div className="flex justify-between gap-4 text-muted-foreground">
-        <span>Weight</span>
+        <span>Exposure</span>
         <span className="font-medium text-foreground tabular-nums">
           {formatPercent(datum.weight)}
         </span>
@@ -667,7 +667,8 @@ function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
       marketValue: group.marketValueUsd,
       ticker: group.ticker,
       value: group.effectiveValueUsd,
-      weight: group.weight ?? 0,
+      weight:
+        snapshot.totalUsd > 0 ? group.effectiveValueUsd / snapshot.totalUsd : 0,
     }))
   const dateLabel = formatDateRange(snapshot.quoteDates)
   const fxLabel = formatDate(snapshot.fxAsOf)
@@ -695,11 +696,6 @@ function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
         <div className="text-4xl font-semibold tracking-tight text-foreground tabular-nums sm:text-5xl">
           {formatUsd(snapshot.totalUsd)}
         </div>
-        <p className="hidden text-xs text-muted-foreground sm:block">
-          {snapshot.isComplete
-            ? `Long effective exposure ${formatUsd(effectiveLongTotal)}.`
-            : "Partial USD value from available market data."}
-        </p>
       </div>
 
       <div className="mt-5 grid items-center gap-5 lg:grid-cols-[minmax(15rem,1fr)_minmax(10rem,0.55fr)]">
@@ -712,8 +708,11 @@ function AllocationPanel({ snapshot }: { snapshot: CurrentPortfolioSnapshot }) {
               >
                 <PieChart>
                   <ChartTooltip
+                    allowEscapeViewBox={{ x: true, y: true }}
                     content={<AllocationTooltip />}
                     cursor={false}
+                    position={{ x: 12, y: 12 }}
+                    wrapperStyle={{ zIndex: 30 }}
                   />
                   <Pie
                     data={chartData}
