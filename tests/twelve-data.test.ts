@@ -4,7 +4,11 @@ import path from "node:path"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { setCachedFxSnapshot } from "@/lib/quotes/cache"
+import {
+  getCachedFxSnapshot,
+  getCachedPreviousCloseQuotes,
+  setCachedFxSnapshot,
+} from "@/lib/quotes/cache"
 import {
   fetchPreviousCloseSnapshots,
   fetchUsdTwdFxSnapshot,
@@ -116,7 +120,8 @@ describe("fetchPreviousCloseSnapshots", () => {
   })
 
   it("resolves previous close prices for US and Taiwan holdings", async () => {
-    const fetchMock = vi.fn(async (input: string | URL) => {
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      void init
       const url = input.toString()
 
       if (url === "https://openapi.twse.com.tw/v1/opendata/t187ap03_L") {
@@ -444,6 +449,240 @@ describe("fetchPreviousCloseSnapshots", () => {
     expect(first).toEqual(second)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it("bypasses cached previous close quotes when force refresh is requested", async () => {
+    let eodCalls = 0
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = input.toString()
+
+      if (url.includes("/symbol_search?") && url.includes("symbol=AAPL")) {
+        return Response.json({
+          data: [
+            {
+              country: "United States",
+              currency: "USD",
+              exchange: "NASDAQ",
+              mic_code: "XNAS",
+              symbol: "AAPL",
+            },
+          ],
+          status: "ok",
+        })
+      }
+
+      if (url.includes("/eod?") && url.includes("symbol=AAPL")) {
+        eodCalls += 1
+
+        return Response.json({
+          close: eodCalls === 1 ? "150.25" : "151.75",
+          currency: "USD",
+          datetime: eodCalls === 1 ? "2026-03-17" : "2026-03-18",
+          exchange: "NASDAQ",
+          mic_code: "XNAS",
+          symbol: "AAPL",
+        })
+      }
+
+      throw new Error(`Unexpected URL ${url}`)
+    })
+
+    const first = await fetchPreviousCloseSnapshots(
+      [{ market: "US", ticker: "AAPL" }],
+      fetchMock as typeof fetch
+    )
+    const forced = await fetchPreviousCloseSnapshots(
+      [{ market: "US", ticker: "AAPL" }],
+      fetchMock as typeof fetch,
+      { forceRefresh: true }
+    )
+
+    expect(first[0]).toMatchObject({
+      asOf: "2026-03-17",
+      previousClose: 150.25,
+    })
+    expect(forced[0]).toMatchObject({
+      asOf: "2026-03-18",
+      previousClose: 151.75,
+    })
+    expect(eodCalls).toBe(2)
+  })
+
+  it("returns cached previous close quotes immediately while missing quotes refresh in the background", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = input.toString()
+
+      if (url.includes("/symbol_search?") && url.includes("symbol=AAPL")) {
+        return Response.json({
+          data: [
+            {
+              country: "United States",
+              currency: "USD",
+              exchange: "NASDAQ",
+              mic_code: "XNAS",
+              symbol: "AAPL",
+            },
+          ],
+          status: "ok",
+        })
+      }
+
+      if (url.includes("/symbol_search?") && url.includes("symbol=MSFT")) {
+        return Response.json({
+          data: [
+            {
+              country: "United States",
+              currency: "USD",
+              exchange: "NASDAQ",
+              mic_code: "XNAS",
+              symbol: "MSFT",
+            },
+          ],
+          status: "ok",
+        })
+      }
+
+      if (url.includes("/eod?") && url.includes("symbol=AAPL")) {
+        return Response.json({
+          close: "150.25",
+          currency: "USD",
+          datetime: "2026-03-17",
+          exchange: "NASDAQ",
+          mic_code: "XNAS",
+          symbol: "AAPL",
+        })
+      }
+
+      if (url.includes("/eod?") && url.includes("symbol=MSFT")) {
+        return Response.json({
+          close: "401.50",
+          currency: "USD",
+          datetime: "2026-03-18",
+          exchange: "NASDAQ",
+          mic_code: "XNAS",
+          symbol: "MSFT",
+        })
+      }
+
+      throw new Error(`Unexpected URL ${url}`)
+    })
+
+    await fetchPreviousCloseSnapshots(
+      [{ market: "US", ticker: "AAPL" }],
+      fetchMock as typeof fetch
+    )
+
+    const cached = await fetchPreviousCloseSnapshots(
+      [
+        { market: "US", ticker: "AAPL" },
+        { market: "US", ticker: "MSFT" },
+      ],
+      fetchMock as typeof fetch,
+      { returnCachedImmediately: true }
+    )
+
+    expect(cached).toEqual([
+      expect.objectContaining({
+        asOf: "2026-03-17",
+        previousClose: 150.25,
+        ticker: "AAPL",
+      }),
+    ])
+    await vi.waitFor(async () => {
+      const refreshed = await getCachedPreviousCloseQuotes([
+        { market: "US", ticker: "MSFT" },
+      ])
+
+      expect(refreshed.freshQuotes["US:MSFT"]).toMatchObject({
+        asOf: "2026-03-18",
+        previousClose: 401.5,
+      })
+    })
+  })
+
+  it("batches forced US previous close refreshes by MIC code", async () => {
+    let eodCalls = 0
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = input.toString()
+
+      if (url.includes("/symbol_search?") && url.includes("symbol=AAPL")) {
+        return Response.json({
+          data: [
+            {
+              country: "United States",
+              currency: "USD",
+              exchange: "NASDAQ",
+              mic_code: "XNAS",
+              symbol: "AAPL",
+            },
+          ],
+          status: "ok",
+        })
+      }
+
+      if (url.includes("/symbol_search?") && url.includes("symbol=MSFT")) {
+        return Response.json({
+          data: [
+            {
+              country: "United States",
+              currency: "USD",
+              exchange: "NASDAQ",
+              mic_code: "XNAS",
+              symbol: "MSFT",
+            },
+          ],
+          status: "ok",
+        })
+      }
+
+      if (url.includes("/eod?")) {
+        eodCalls += 1
+
+        return Response.json({
+          AAPL: {
+            close: "151.75",
+            currency: "USD",
+            datetime: "2026-03-18",
+            exchange: "NASDAQ",
+            mic_code: "XNAS",
+            symbol: "AAPL",
+          },
+          MSFT: {
+            close: "401.50",
+            currency: "USD",
+            datetime: "2026-03-18",
+            exchange: "NASDAQ",
+            mic_code: "XNAS",
+            symbol: "MSFT",
+          },
+        })
+      }
+
+      throw new Error(`Unexpected URL ${url}`)
+    })
+
+    const quotes = await fetchPreviousCloseSnapshots(
+      [
+        { market: "US", ticker: "AAPL" },
+        { market: "US", ticker: "MSFT" },
+      ],
+      fetchMock as typeof fetch,
+      { forceRefresh: true }
+    )
+
+    expect(quotes).toEqual([
+      expect.objectContaining({
+        asOf: "2026-03-18",
+        previousClose: 151.75,
+        ticker: "AAPL",
+      }),
+      expect.objectContaining({
+        asOf: "2026-03-18",
+        previousClose: 401.5,
+        ticker: "MSFT",
+      }),
+    ])
+    expect(eodCalls).toBe(1)
+  })
 })
 
 describe("fetchUsdTwdFxSnapshot", () => {
@@ -533,6 +772,36 @@ describe("fetchUsdTwdFxSnapshot", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it("bypasses the cached USD/TWD snapshot when force refresh is requested", async () => {
+    let calls = 0
+    const fetchMock = vi.fn(async () => {
+      calls += 1
+
+      return Response.json({
+        close: calls === 1 ? "31.95997" : "31.3728",
+        datetime: calls === 1 ? "2026-03-16" : "2026-05-11",
+        symbol: "USD/TWD",
+      })
+    })
+
+    const first = await fetchUsdTwdFxSnapshot(fetchMock as typeof fetch)
+    const forced = await fetchUsdTwdFxSnapshot(fetchMock as typeof fetch, {
+      forceRefresh: true,
+    })
+
+    expect(first).toEqual({
+      asOf: "2026-03-16",
+      pair: "USD/TWD",
+      rate: 31.95997,
+    })
+    expect(forced).toEqual({
+      asOf: "2026-05-11",
+      pair: "USD/TWD",
+      rate: 31.3728,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it("returns a stale USD/TWD snapshot while refreshing it in the background", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-03-16T00:00:00.000Z"))
@@ -561,5 +830,14 @@ describe("fetchUsdTwdFxSnapshot", () => {
       rate: 31.5,
     })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.waitFor(async () => {
+      const refreshed = await getCachedFxSnapshot("USD/TWD")
+
+      expect(refreshed?.snapshot).toEqual({
+        asOf: "2026-03-17",
+        pair: "USD/TWD",
+        rate: 31.95997,
+      })
+    })
   })
 })

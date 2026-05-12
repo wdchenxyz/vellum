@@ -57,6 +57,7 @@ const twelveDataEodResponseSchema = z.object({
   datetime: z.string().nullable().optional(),
   close: z.string(),
 })
+const twelveDataBatchEodResponseSchema = z.record(z.string(), z.unknown())
 
 export type TwelveDataStockLookupItem = z.infer<
   typeof twelveDataStocksResponseSchema
@@ -153,7 +154,8 @@ function sleep(ms: number) {
 export async function fetchTwelveDataJson(
   pathname: string,
   params: Record<string, string | undefined>,
-  fetcher: typeof fetch
+  fetcher: typeof fetch,
+  { skipThrottle = false }: { skipThrottle?: boolean } = {}
 ) {
   async function doFetch() {
     const response = await fetcher(buildTwelveDataUrl(pathname, params), {
@@ -183,7 +185,7 @@ export async function fetchTwelveDataJson(
     return payload
   }
 
-  return enqueue(async () => {
+  async function fetchWithRetry() {
     try {
       return await doFetch()
     } catch (error) {
@@ -196,7 +198,9 @@ export async function fetchTwelveDataJson(
       }
       throw error
     }
-  })
+  }
+
+  return skipThrottle ? fetchWithRetry() : enqueue(fetchWithRetry)
 }
 
 export function selectInstrumentMatch(
@@ -329,6 +333,15 @@ async function fetchPreviousClose(
 ) {
   const instrument = await resolveInstrument(target, fetcher)
 
+  return fetchPreviousCloseForInstrument(target, instrument, fetcher)
+}
+
+async function fetchPreviousCloseForInstrument(
+  target: PreviousCloseLookupTarget,
+  instrument: CachedInstrument,
+  fetcher: typeof fetch,
+  { skipThrottle = false }: { skipThrottle?: boolean } = {}
+) {
   if (target.market === "TW") {
     const taiwanQuote = await fetchTaiwanPreviousClose(
       instrument.symbol,
@@ -353,8 +366,18 @@ async function fetchPreviousClose(
       mic_code: instrument.mic_code,
       symbol: instrument.symbol,
     },
-    fetcher
+    fetcher,
+    { skipThrottle }
   )
+
+  return buildUsPreviousCloseQuote(target, instrument, payload)
+}
+
+function buildUsPreviousCloseQuote(
+  target: PreviousCloseLookupTarget,
+  instrument: CachedInstrument,
+  payload: unknown
+): PreviousCloseQuote {
   const parsed = twelveDataEodResponseSchema.safeParse(payload)
 
   if (!parsed.success) {
@@ -382,6 +405,129 @@ async function fetchPreviousClose(
     previousClose: parseDecimal(parsed.data.close),
     ticker: instrument.symbol,
   }
+}
+
+type ResolvedUsPreviousCloseTarget = {
+  instrument: CachedInstrument
+  target: PreviousCloseLookupTarget
+}
+
+function getBatchEodPayload(
+  payload: Record<string, unknown>,
+  instrument: CachedInstrument
+) {
+  const normalizedSymbol = instrument.symbol.trim().toUpperCase()
+
+  return (
+    payload[instrument.symbol] ??
+    payload[normalizedSymbol] ??
+    Object.entries(payload).find(
+      ([symbol]) => symbol.trim().toUpperCase() === normalizedSymbol
+    )?.[1]
+  )
+}
+
+async function fetchUsPreviousCloseBatchGroup(
+  group: ResolvedUsPreviousCloseTarget[],
+  fetcher: typeof fetch
+) {
+  if (group.length === 1) {
+    const [{ instrument, target }] = group
+    return [
+      await fetchPreviousCloseForInstrument(target, instrument, fetcher, {
+        skipThrottle: true,
+      }),
+    ]
+  }
+
+  const payload = await fetchTwelveDataJson(
+    "/eod",
+    {
+      mic_code: group[0]?.instrument.mic_code,
+      symbol: group.map(({ instrument }) => instrument.symbol).join(","),
+    },
+    fetcher,
+    { skipThrottle: true }
+  )
+  const parsed = twelveDataBatchEodResponseSchema.safeParse(payload)
+
+  if (!parsed.success) {
+    throw new Error(
+      "Twelve Data returned an invalid batch end-of-day response."
+    )
+  }
+
+  return group.map(({ instrument, target }) => {
+    const quotePayload = getBatchEodPayload(parsed.data, instrument)
+
+    if (!quotePayload) {
+      throw new Error(
+        `Twelve Data did not return an end-of-day quote for ${instrument.symbol}.`
+      )
+    }
+
+    return buildUsPreviousCloseQuote(target, instrument, quotePayload)
+  })
+}
+
+async function fetchUsPreviousCloseBatch(
+  targets: ResolvedUsPreviousCloseTarget[],
+  fetcher: typeof fetch
+) {
+  const groupsByMic = new Map<string, ResolvedUsPreviousCloseTarget[]>()
+
+  for (const target of targets) {
+    const group = groupsByMic.get(target.instrument.mic_code) ?? []
+    group.push(target)
+    groupsByMic.set(target.instrument.mic_code, group)
+  }
+
+  const quotes: PreviousCloseQuote[] = []
+
+  for (const group of groupsByMic.values()) {
+    try {
+      quotes.push(...(await fetchUsPreviousCloseBatchGroup(group, fetcher)))
+    } catch (error) {
+      quotes.push(
+        ...group.map(({ target }) =>
+          buildPreviousCloseErrorQuote(target, error)
+        )
+      )
+    }
+  }
+
+  return quotes
+}
+
+async function fetchForcedPreviousCloseQuotes(
+  targets: PreviousCloseLookupTarget[],
+  fetcher: typeof fetch
+) {
+  const quotes: PreviousCloseQuote[] = []
+  const usTargets: ResolvedUsPreviousCloseTarget[] = []
+
+  await Promise.all(
+    targets.map(async (target) => {
+      try {
+        const instrument = await resolveInstrument(target, fetcher)
+
+        if (target.market === "TW") {
+          quotes.push(
+            await fetchPreviousCloseForInstrument(target, instrument, fetcher)
+          )
+          return
+        }
+
+        usTargets.push({ instrument, target })
+      } catch (error) {
+        quotes.push(buildPreviousCloseErrorQuote(target, error))
+      }
+    })
+  )
+
+  quotes.push(...(await fetchUsPreviousCloseBatch(usTargets, fetcher)))
+
+  return quotes
 }
 
 async function fetchMissingPreviousCloseQuotes(
@@ -423,6 +569,16 @@ function mapQuotesToTargets(
   return targets.map((target) => quotesByKey[getLookupKey(target)])
 }
 
+function mapCachedQuotesToTargets(
+  targets: PreviousCloseLookupTarget[],
+  quotesByKey: Record<string, PreviousCloseQuote>
+) {
+  return targets.flatMap((target) => {
+    const quote = quotesByKey[getLookupKey(target)]
+    return quote ? [quote] : []
+  })
+}
+
 function getCachedFxSnapshotOrRefresh(
   cachedResult: FxSnapshotCacheResult,
   fetcher: typeof fetch
@@ -440,10 +596,38 @@ function getCachedFxSnapshotOrRefresh(
 
 export async function fetchPreviousCloseSnapshots(
   targets: PreviousCloseLookupTarget[],
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  {
+    forceRefresh = false,
+    returnCachedImmediately = false,
+  }: { forceRefresh?: boolean; returnCachedImmediately?: boolean } = {}
 ): Promise<PreviousCloseQuote[]> {
+  if (forceRefresh) {
+    const fetchedQuotes = await fetchForcedPreviousCloseQuotes(targets, fetcher)
+
+    await setCachedPreviousCloseQuotes(fetchedQuotes)
+
+    return mapQuotesToTargets(
+      targets,
+      buildPreviousCloseLookup({}, {}, fetchedQuotes)
+    )
+  }
+
   const { freshQuotes, staleTargets, staleQuotes, missingTargets } =
     await getCachedPreviousCloseQuotes(targets)
+
+  const cachedQuotes = buildPreviousCloseLookup(freshQuotes, staleQuotes, [])
+  const hasCachedQuotes = Object.keys(cachedQuotes).length > 0
+
+  if (returnCachedImmediately && hasCachedQuotes) {
+    const refreshTargets = [...staleTargets, ...missingTargets]
+
+    if (refreshTargets.length > 0) {
+      void refreshStaleQuotes(refreshTargets, fetcher)
+    }
+
+    return mapCachedQuotesToTargets(targets, cachedQuotes)
+  }
 
   const fetchedQuotes = await fetchMissingPreviousCloseQuotes(
     missingTargets,
@@ -484,7 +668,14 @@ async function refreshStaleQuotes(
   })
 }
 
-export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
+export async function fetchUsdTwdFxSnapshot(
+  fetcher: typeof fetch = fetch,
+  { forceRefresh = false }: { forceRefresh?: boolean } = {}
+) {
+  if (forceRefresh) {
+    return await fetchFreshFxSnapshot(fetcher, { skipThrottle: true })
+  }
+
   const cachedResult: FxSnapshotCacheResult =
     await getCachedFxSnapshot("USD/TWD")
   const cachedSnapshot = getCachedFxSnapshotOrRefresh(cachedResult, fetcher)
@@ -496,13 +687,17 @@ export async function fetchUsdTwdFxSnapshot(fetcher: typeof fetch = fetch) {
   return await fetchFreshFxSnapshot(fetcher)
 }
 
-async function fetchFreshFxSnapshot(fetcher: typeof fetch) {
+async function fetchFreshFxSnapshot(
+  fetcher: typeof fetch,
+  { skipThrottle = false }: { skipThrottle?: boolean } = {}
+) {
   const payload = await fetchTwelveDataJson(
     "/eod",
     {
       symbol: "USD/TWD",
     },
-    fetcher
+    fetcher,
+    { skipThrottle }
   )
   const parsed = twelveDataEodResponseSchema.safeParse(payload)
 

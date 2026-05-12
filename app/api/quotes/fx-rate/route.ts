@@ -6,9 +6,11 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 30
 export const runtime = "nodejs"
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const snapshot = await fetchUsdTwdFxSnapshot()
+    const url = new URL(request.url)
+    const forceRefresh = url.searchParams.get("forceRefresh") === "true"
+    const snapshot = await fetchUsdTwdFxSnapshot(fetch, { forceRefresh })
 
     return NextResponse.json(
       { snapshot },

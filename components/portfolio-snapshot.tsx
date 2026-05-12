@@ -106,6 +106,7 @@ const CHART_COLORS = [
   "oklch(0.62 0.16 15)",
 ]
 const MARKET_DATA_TIMEOUT_MS = 15_000
+const FORCE_MARKET_DATA_TIMEOUT_MS = 60_000
 const MARKET_OPTIONS: SupportedMarket[] = ["US", "TW"]
 const EXPOSURE_DIRECTION_OPTIONS: ExposureDirection[] = ["long", "inverse"]
 
@@ -322,9 +323,11 @@ function chunkTargets(targets: PreviousCloseLookupTarget[]) {
 }
 
 async function fetchQuoteMap({
+  forceRefresh = false,
   signal,
   targets,
 }: {
+  forceRefresh?: boolean
   signal: AbortSignal
   targets: PreviousCloseLookupTarget[]
 }) {
@@ -332,7 +335,11 @@ async function fetchQuoteMap({
 
   for (const batch of chunkTargets(targets)) {
     const response = await fetch("/api/quotes/previous-close", {
-      body: JSON.stringify({ targets: batch }),
+      body: JSON.stringify({
+        forceRefresh,
+        returnCachedImmediately: !forceRefresh,
+        targets: batch,
+      }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
       signal,
@@ -357,8 +364,11 @@ async function fetchQuoteMap({
   ) as Record<string, PreviousCloseQuote>
 }
 
-async function fetchFxSnapshot(signal: AbortSignal) {
-  const response = await fetch("/api/quotes/fx-rate", {
+async function fetchFxSnapshot(signal: AbortSignal, forceRefresh = false) {
+  const url = forceRefresh
+    ? "/api/quotes/fx-rate?forceRefresh=true"
+    : "/api/quotes/fx-rate"
+  const response = await fetch(url, {
     cache: "no-store",
     signal,
   })
@@ -1334,8 +1344,12 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
   >([])
   const [profileStatus, setProfileStatus] = useState<LoadStatus>("idle")
   const [profileIssue, setProfileIssue] = useState<string | null>(null)
-  const [refreshIndex, setRefreshIndex] = useState(0)
+  const [refreshRequest, setRefreshRequest] = useState({
+    forceQuoteRefresh: false,
+    index: 0,
+  })
   const [baseCurrency, setBaseCurrency] = useState<BaseCurrency>("USD")
+  const { forceQuoteRefresh, index: refreshIndex } = refreshRequest
 
   const aggregated = useMemo(() => aggregateHoldings(rows), [rows])
   const quoteTargets = useMemo(
@@ -1414,10 +1428,13 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
 
     const controller = new AbortController()
     let timedOut = false
+    const timeoutMs = forceQuoteRefresh
+      ? FORCE_MARKET_DATA_TIMEOUT_MS
+      : MARKET_DATA_TIMEOUT_MS
     const timeoutId = window.setTimeout(() => {
       timedOut = true
       controller.abort()
-    }, MARKET_DATA_TIMEOUT_MS)
+    }, timeoutMs)
 
     async function loadQuotes() {
       setQuoteStatus("loading")
@@ -1425,6 +1442,7 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
 
       try {
         const nextQuotesByKey = await fetchQuoteMap({
+          forceRefresh: forceQuoteRefresh,
           signal: controller.signal,
           targets: quoteTargets,
         })
@@ -1438,7 +1456,7 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
 
         setQuoteIssue(
           timedOut
-            ? "Previous close prices timed out after 15 seconds."
+            ? `Previous close prices timed out after ${Math.round(timeoutMs / 1000)} seconds.`
             : getErrorMessage(error)
         )
         setQuoteStatus("error")
@@ -1453,7 +1471,7 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
       window.clearTimeout(timeoutId)
       controller.abort()
     }
-  }, [quoteTargets, refreshIndex])
+  }, [forceQuoteRefresh, quoteTargets, refreshIndex])
 
   const needsFxRate = hasTwdHoldings || baseCurrency === "TWD"
 
@@ -1474,7 +1492,10 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
       setFxIssue(null)
 
       try {
-        const nextFxSnapshot = await fetchFxSnapshot(controller.signal)
+        const nextFxSnapshot = await fetchFxSnapshot(
+          controller.signal,
+          forceQuoteRefresh
+        )
 
         setFxSnapshot(nextFxSnapshot)
         setFxStatus("ready")
@@ -1500,7 +1521,7 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
       window.clearTimeout(timeoutId)
       controller.abort()
     }
-  }, [needsFxRate, refreshIndex])
+  }, [forceQuoteRefresh, needsFxRate, refreshIndex])
 
   useEffect(() => {
     if (aggregated.holdings.length === 0) {
@@ -1581,7 +1602,12 @@ export function PortfolioSnapshot({ rows }: { rows: TradeTableRow[] }) {
           </Button>
           <Button
             disabled={isLoading || quoteTargets.length === 0}
-            onClick={() => setRefreshIndex((current) => current + 1)}
+            onClick={() =>
+              setRefreshRequest((current) => ({
+                forceQuoteRefresh: true,
+                index: current.index + 1,
+              }))
+            }
             size="sm"
             type="button"
             variant="outline"
