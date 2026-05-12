@@ -6,7 +6,7 @@ import type { PreviousCloseLookupTarget } from "@/lib/portfolio/schema"
 import { z } from "zod"
 
 const US_TICKER_PATTERN = /^[A-Z][A-Z0-9.-]{0,9}$/
-const TW_TICKER_PATTERN = /^\d{4,6}$/
+const TW_TICKER_PATTERN = /^\d{4,6}[A-Z]?$/
 const CJK_PATTERN = /\p{Script=Han}/u
 const MIN_NAME_MATCH_SCORE = 0.6
 const MIN_TOP_SCORE_GAP = 0.15

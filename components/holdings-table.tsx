@@ -107,7 +107,7 @@ type WeightChartView = {
   selectorValue: string | null
 }
 
-const TW_TICKER_PATTERN = /^\d{4,6}$/
+const TW_TICKER_PATTERN = /^\d{4,6}[A-Z]?$/
 const CJK_PATTERN = /\p{Script=Han}/u
 
 function getHoldingLabel(holding: PortfolioHoldingGroup["holdings"][number]) {

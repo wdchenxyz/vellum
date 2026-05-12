@@ -58,7 +58,7 @@ export type PortfolioSummary = {
   missingPriceCount: number
 }
 
-const TW_TICKER_PATTERN = /^\d{4,6}$/
+const TW_TICKER_PATTERN = /^\d{4,6}[A-Z]?$/
 const US_TICKER_PATTERN = /^[A-Z][A-Z0-9.-]*$/
 const CJK_PATTERN = /\p{Script=Han}/u
 const MARKET_DEFAULT_CURRENCY: Record<SupportedMarket, string> = {

@@ -99,6 +99,26 @@ describe("trade ticker resolution", () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it("accepts a Taiwanese leveraged ETF ticker with a trailing letter", async () => {
+    const fetchMock = vi.fn()
+
+    const result = await resolveExtractedTradeTicker({
+      fetcher: fetchMock as unknown as typeof fetch,
+      trade: makeTrade({
+        currency: "TWD",
+        securityName: "元大台灣50正2",
+        ticker: "00631L",
+        tickerCandidates: [],
+      }),
+    })
+
+    expect(result).toMatchObject({
+      status: "accepted",
+      trade: { ticker: "00631L" },
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it("resolves a validated candidate from a visible security name", async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = input.toString()
