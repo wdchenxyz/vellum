@@ -90,6 +90,7 @@ type AllocationDatum = {
 type MergedHoldingAccount = {
   account: string
   marketValueUsd: number | null
+  quantityOpen: number
 }
 
 type MergedSnapshotHolding = SnapshotHolding & {
@@ -145,6 +146,10 @@ const percentFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
   minimumFractionDigits: 1,
   style: "percent",
+})
+
+const quantityFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 8,
 })
 
 function getErrorMessage(error: unknown) {
@@ -232,6 +237,10 @@ function formatPercent(value: number | null) {
   }
 
   return percentFormatter.format(value)
+}
+
+function formatQuantity(value: number) {
+  return quantityFormatter.format(value)
 }
 
 function formatMultiplier(value: number) {
@@ -516,6 +525,9 @@ function mergeHoldingAccounts(holdings: SnapshotHolding[]) {
               existing.marketValueUsd,
               holding.marketValueUsd,
             ]),
+      quantityOpen: roundDisplayNumber(
+        (existing?.quantityOpen ?? 0) + holding.quantityOpen
+      ),
     })
   }
 
@@ -1320,11 +1332,22 @@ function HoldingAccountBreakdown({
             <span className="truncate text-muted-foreground">
               {account.account}
             </span>
-            <span className="font-medium tabular-nums">
-              {formatBase(account.marketValueUsd, baseCurrency, fxRate)}
+            <span className="flex flex-col items-end gap-0.5">
+              <span className="font-medium tabular-nums">
+                {formatQuantity(account.quantityOpen)}
+              </span>
+              <span className="text-[0.7rem] leading-none text-muted-foreground tabular-nums">
+                {formatBase(account.marketValueUsd, baseCurrency, fxRate)}
+              </span>
             </span>
           </div>
         ))}
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-border/70 px-2 pt-2 text-xs">
+          <span className="truncate font-medium">Net quantity</span>
+          <span className="font-semibold tabular-nums">
+            {formatQuantity(holding.quantityOpen)}
+          </span>
+        </div>
       </div>
     </div>
   )
