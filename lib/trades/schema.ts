@@ -6,6 +6,17 @@ export const tradeSideSchema = z.enum(["BUY", "SELL"])
 
 const tradeAccountSchema = z.string().trim().min(1).nullable()
 
+export const tickerCandidateSchema = z.object({
+  confidence: z.number().finite().min(0).max(1).nullable().optional(),
+  reason: z.string().trim().min(1).max(160).nullable().optional(),
+  ticker: z
+    .string()
+    .trim()
+    .min(1)
+    .max(16)
+    .describe("A possible ticker inferred from the visible security name."),
+})
+
 export const extractedTradeSchema = z.object({
   date: z
     .string()
@@ -16,6 +27,23 @@ export const extractedTradeSchema = z.object({
     .min(1)
     .describe(
       "Security identifier, preferably a ticker or numeric stock code such as AAPL or 2330. If only a visible stock name is present, return that name."
+    ),
+  securityName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(160)
+    .nullable()
+    .optional()
+    .describe(
+      "Visible security name from the confirmation if present, even if truncated. Use null when no security name is visible."
+    ),
+  tickerCandidates: z
+    .array(tickerCandidateSchema)
+    .max(3)
+    .optional()
+    .describe(
+      "Possible ticker candidates inferred from a visible security name when the ticker itself is not visible."
     ),
   quantity: z
     .number()
@@ -39,6 +67,15 @@ export const extractedTradeSchema = z.object({
     .nonnegative()
     .nullable()
     .describe("Total fee or commission as a plain number, otherwise null."),
+  settlementAmount: z
+    .number()
+    .finite()
+    .nonnegative()
+    .nullable()
+    .optional()
+    .describe(
+      "Absolute total payable or receivable amount for the trade if visible, otherwise null."
+    ),
   side: tradeSideSchema.describe("Trade direction, always BUY or SELL."),
 })
 
@@ -87,7 +124,12 @@ export const fileExtractionResultSchema = z.object({
 })
 
 const tradeTableRowBaseSchema = extractedTradeSchema
-  .omit({ fee: true })
+  .omit({
+    fee: true,
+    securityName: true,
+    settlementAmount: true,
+    tickerCandidates: true,
+  })
   .extend({
     account: tradeAccountSchema,
     totalAmount: z
@@ -167,6 +209,7 @@ export type ExtractedTrade = z.infer<typeof extractedTradeSchema>
 export type ExtractedTradesEnvelope = z.infer<
   typeof extractedTradesEnvelopeSchema
 >
+export type TickerCandidate = z.infer<typeof tickerCandidateSchema>
 export type TradeFileInput = z.infer<typeof tradeFileSchema>
 export type ExtractTradesRequest = z.infer<typeof extractTradesRequestSchema>
 export type FileExtractionResult = z.infer<typeof fileExtractionResultSchema>

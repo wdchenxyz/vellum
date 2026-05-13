@@ -14,30 +14,30 @@ import {
   PromptInputFooter,
   PromptInputHeader,
   type PromptInputMessage,
+  PromptInputProvider,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input"
-import { AssetValueChart } from "@/components/asset-value-chart"
-import { HoldingsTable } from "@/components/holdings-table"
-import { PortfolioSummaryCards } from "@/components/portfolio-summary-cards"
+import { PortfolioSnapshot } from "@/components/portfolio-snapshot"
 import { TradesTable } from "@/components/trades-table"
 import {
-  aggregateHoldings,
-  applyPreviousCloseQuotes,
-} from "@/lib/portfolio/holdings"
-import {
-  type BenchmarkSeries,
-  dailyValuesResponseSchema,
-  type DailyValuePoint,
-  fxRateResponseSchema,
-  type FxRateSnapshot,
-  previousCloseResponseSchema,
-  type PreviousCloseQuote,
-} from "@/lib/portfolio/schema"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
+import { Spinner } from "@/components/ui/spinner"
 import {
   MAX_BATCH_SIZE_LABEL,
   MAX_FILE_SIZE_BYTES,
@@ -52,9 +52,42 @@ import {
   type ExtractTradesResponse,
   type TradeTableRow,
 } from "@/lib/trades/schema"
+import { cn } from "@/lib/utils"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { ChevronDown, Paperclip, TriangleAlert } from "lucide-react"
-import { useCallback, useEffect, useId, useMemo, useState } from "react"
+import {
+  Building2,
+  CheckCircle2,
+  CircleAlert,
+  NotebookPen,
+  Paperclip,
+  Plus,
+  TriangleAlert,
+  UploadCloud,
+  X,
+} from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+
+type ExtractionNotice = {
+  description: string
+  id: string
+  kind: "running" | "success" | "error"
+  title: string
+}
+
+type CompletedExtractionNotice = Omit<ExtractionNotice, "id" | "kind"> & {
+  kind: "success" | "error"
+}
+
+const RUNNING_EXTRACTION_NOTICE_ID = "running-extraction"
+const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000
+const EXTRACTION_NOTICE_STACK_SELECTOR = "[data-extraction-notice-stack]"
+
+const DEFAULT_ACCOUNT_OPTIONS = [
+  "Firstrade",
+  "元大台股",
+  "元大複委託",
+  "群益複委託",
+]
 
 function pluralize(value: number, singular: string, plural = `${singular}s`) {
   return value === 1 ? singular : plural
@@ -83,72 +116,226 @@ function getErrorMessage(error: unknown) {
   return "The request failed."
 }
 
-function BrowseFilesButton() {
+function isExtractionNoticeInteraction(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    target.closest(EXTRACTION_NOTICE_STACK_SELECTOR) !== null
+  )
+}
+
+function formatFileList(files: PromptInputMessage["files"]) {
+  if (files.length === 0) {
+    return "No files selected"
+  }
+
+  if (files.length === 1) {
+    return files[0]?.filename ?? "1 file"
+  }
+
+  const firstFileName = files[0]?.filename ?? "first file"
+  return `${firstFileName} and ${files.length - 1} more ${pluralize(
+    files.length - 1,
+    "file"
+  )}`
+}
+
+function ExtractionNoticeCard({
+  notice,
+  onDismiss,
+  onOpenDrawer,
+}: {
+  notice: ExtractionNotice
+  onDismiss: () => void
+  onOpenDrawer: () => void
+}) {
+  const isRunning = notice.kind === "running"
+  const isSuccess = notice.kind === "success"
+  const Icon = isSuccess ? CheckCircle2 : CircleAlert
+
+  return (
+    <Alert
+      aria-live={isRunning || isSuccess ? "polite" : undefined}
+      className={cn(
+        "pointer-events-auto w-full animate-in rounded-xl border-border/70 bg-card/95 px-3 py-3 shadow-lg shadow-foreground/10 backdrop-blur-xl duration-200 fade-in-0 slide-in-from-right-3",
+        notice.kind === "error"
+          ? "border-destructive/30 text-destructive has-data-[slot=alert-action]:pr-28"
+          : "text-card-foreground"
+      )}
+      role={isRunning || isSuccess ? "status" : "alert"}
+      variant={notice.kind === "error" ? "destructive" : "default"}
+    >
+      {isRunning ? (
+        <Spinner className="text-primary" />
+      ) : (
+        <Icon className={cn("size-4", isSuccess && "text-primary")} />
+      )}
+      <AlertTitle>{notice.title}</AlertTitle>
+      <AlertDescription
+        className={
+          notice.kind === "error" ? undefined : "text-muted-foreground"
+        }
+      >
+        {notice.description}
+      </AlertDescription>
+      {notice.kind === "error" ? (
+        <AlertAction className="flex items-center gap-1">
+          <Button
+            onClick={onOpenDrawer}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            Review
+          </Button>
+          <Button
+            aria-label="Dismiss extraction failure"
+            onClick={onDismiss}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <X className="size-3" />
+          </Button>
+        </AlertAction>
+      ) : isSuccess ? (
+        <AlertAction>
+          <Button onClick={onDismiss} size="xs" type="button" variant="ghost">
+            Dismiss
+          </Button>
+        </AlertAction>
+      ) : null}
+    </Alert>
+  )
+}
+
+function ExtractionNoticeStack({
+  notices,
+  onDismiss,
+  onOpenDrawer,
+}: {
+  notices: ExtractionNotice[]
+  onDismiss: (id: string) => void
+  onOpenDrawer: () => void
+}) {
+  if (notices.length === 0) {
+    return null
+  }
+
+  return (
+    <div
+      className="pointer-events-none fixed top-4 right-4 left-4 z-[70] flex flex-col items-end gap-2 sm:top-5 sm:left-auto sm:w-88"
+      data-extraction-notice-stack
+    >
+      {notices.map((notice) => (
+        <ExtractionNoticeCard
+          key={notice.id}
+          notice={notice}
+          onDismiss={() => onDismiss(notice.id)}
+          onOpenDrawer={onOpenDrawer}
+        />
+      ))}
+    </div>
+  )
+}
+
+function BrowseFilesButton({
+  size = "sm",
+  label = "Choose files",
+}: {
+  size?: "sm" | "default"
+  label?: string
+}) {
   const attachments = usePromptInputAttachments()
 
   return (
     <Button
       className="border-primary/20 bg-primary/5 text-primary hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
       onClick={() => attachments.openFileDialog()}
-      size="sm"
+      size={size}
       type="button"
       variant="outline"
     >
       <Paperclip className="size-4" />
-      Choose files
+      {label}
     </Button>
+  )
+}
+
+function AttachmentList() {
+  const attachments = usePromptInputAttachments()
+
+  if (attachments.files.length === 0) {
+    return null
+  }
+
+  return (
+    <Attachments variant="inline">
+      {attachments.files.map((attachment) => (
+        <Attachment
+          data={attachment}
+          key={attachment.id}
+          onRemove={() => attachments.remove(attachment.id)}
+        >
+          <AttachmentPreview />
+          <AttachmentInfo />
+          <AttachmentRemove />
+        </Attachment>
+      ))}
+    </Attachments>
   )
 }
 
 function AttachmentTray() {
   const attachments = usePromptInputAttachments()
   const fileCount = attachments.files.length
+  const hasFiles = fileCount > 0
+  const filledLabel = `Ready to add ${fileCount} ${pluralize(fileCount, "file")}.`
 
   return (
-    <div className="flex w-full flex-col gap-2">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="text-sm font-medium text-primary">
-          {fileCount === 0
-            ? "Drop screenshots or PDFs here."
-            : `Ready to extract ${fileCount} ${pluralize(fileCount, "file")}.`}
-        </p>
+    <div className="flex w-full flex-col gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <UploadCloud className="size-4" />
+          </span>
+          <div className="flex flex-col">
+            <p className="text-sm font-semibold text-foreground">
+              {hasFiles ? filledLabel : "Drop screenshots or PDFs"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Drag, paste, or browse below.
+            </p>
+          </div>
+        </div>
         <BrowseFilesButton />
       </div>
-
-      {fileCount > 0 ? (
-        <Attachments variant="inline">
-          {attachments.files.map((attachment) => (
-            <Attachment
-              data={attachment}
-              key={attachment.id}
-              onRemove={() => attachments.remove(attachment.id)}
-            >
-              <AttachmentPreview />
-              <AttachmentInfo />
-              <AttachmentRemove />
-            </Attachment>
-          ))}
-        </Attachments>
-      ) : null}
+      <AttachmentList />
     </div>
   )
 }
 
-function OptionalNote() {
-  const textareaId = useId()
+const NOTE_PLACEHOLDER =
+  "Example: ignore account summary totals and use only filled transactions."
 
+function OptionalNote() {
   return (
-    <details className="group px-4 pb-2">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1.5 text-xs text-muted-foreground hover:text-foreground">
-        <ChevronDown className="size-3 transition-transform group-open:rotate-180" />
-        Add context note
-      </summary>
-      <PromptInputTextarea
-        className="mt-1 min-h-16 text-sm"
-        id={textareaId}
-        placeholder="Example: ignore account summary totals and extract only filled trades."
-      />
-    </details>
+    <div className="w-full px-4 pb-3">
+      <div className="flex flex-col gap-1.5 rounded-lg border border-border/70 bg-background/60 px-3 py-2 transition-colors focus-within:border-primary/40 focus-within:bg-background">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <NotebookPen className="size-3.5 text-muted-foreground" />
+            Context note
+          </div>
+          <span className="text-[10px] tracking-wider text-muted-foreground uppercase">
+            Optional
+          </span>
+        </div>
+        <PromptInputTextarea
+          className="[field-sizing:fixed] min-h-16 w-full resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
+          placeholder={NOTE_PLACEHOLDER}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -200,71 +387,92 @@ function mergeTradeRows(
   return [...rowsById.values()]
 }
 
+function getCompletedNoticeId(kind: "success" | "error") {
+  return `${kind}-${Date.now()}`
+}
+
 export function TradeExtractor() {
   const [rows, setRows] = useState<TradeTableRow[]>([])
   const [status, setStatus] = useState<ChatStatus>("ready")
+  const [ingestOpen, setIngestOpen] = useState(false)
   const [uploadIssue, setUploadIssue] = useState<string | null>(null)
   const [issues, setIssues] = useState<string[]>([])
   const [restoreIssue, setRestoreIssue] = useState<string | null>(null)
-  const [successMessage, setSuccessMessage] = useState<string | null>(null)
-  const [quotesByKey, setQuotesByKey] = useState<
-    Record<string, PreviousCloseQuote>
-  >({})
-  const [quoteStatus, setQuoteStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle")
-  const [quoteRequestIssue, setQuoteRequestIssue] = useState<string | null>(
-    null
-  )
-  const [fxSnapshot, setFxSnapshot] = useState<FxRateSnapshot | null>(null)
-  const [fxStatus, setFxStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle")
-  const [fxIssue, setFxIssue] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
   const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
-  const [dailySeries, setDailySeries] = useState<DailyValuePoint[]>([])
-  const [dailyCostBasis, setDailyCostBasis] = useState<number | null>(null)
-  const [dailyBenchmarks, setDailyBenchmarks] = useState<BenchmarkSeries>({
-    spx: [],
-    twii: [],
-  })
-  const [dailyStatus, setDailyStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle")
-  const [dailyIssue, setDailyIssue] = useState<string | null>(null)
-
-  const accountOptions = useMemo(
-    () =>
-      [
-        ...new Set(
-          rows
-            .map((row) => row.account)
-            .filter((account): account is string => account !== null)
-        ),
-      ].sort((a, b) => a.localeCompare(b)),
-    [rows]
+  const [extractionNotices, setExtractionNotices] = useState<
+    ExtractionNotice[]
+  >([])
+  const extractionRunning = extractionNotices.some(
+    (notice) => notice.kind === "running"
   )
 
-  const aggregatedPortfolio = useMemo(() => aggregateHoldings(rows), [rows])
-  const valuedPortfolio = useMemo(
-    () => applyPreviousCloseQuotes(aggregatedPortfolio.holdings, quotesByKey),
-    [aggregatedPortfolio.holdings, quotesByKey]
+  const upsertExtractionNotice = useCallback((notice: ExtractionNotice) => {
+    setExtractionNotices((currentNotices) => [
+      notice,
+      ...currentNotices.filter(
+        (currentNotice) => currentNotice.id !== notice.id
+      ),
+    ])
+  }, [])
+
+  const addCompletedExtractionNotice = useCallback(
+    (notice: CompletedExtractionNotice) => {
+      setExtractionNotices((currentNotices) =>
+        [
+          {
+            ...notice,
+            id: getCompletedNoticeId(notice.kind),
+          },
+          ...currentNotices.filter(
+            (currentNotice) => currentNotice.id !== RUNNING_EXTRACTION_NOTICE_ID
+          ),
+        ].slice(0, 3)
+      )
+    },
+    []
   )
-  const hasUsdBucket = valuedPortfolio.groups.some((group) =>
-    group.currencies.includes("USD")
-  )
-  const needsUsdTwdFxSnapshot = hasUsdBucket
-  const missingQuoteTargets = useMemo(
-    () =>
-      aggregatedPortfolio.holdings
-        .filter((holding) => !quotesByKey[holding.quoteKey])
-        .map((holding) => ({
-          market: holding.market,
-          ticker: holding.ticker,
-        })),
-    [aggregatedPortfolio.holdings, quotesByKey]
-  )
+
+  const dismissExtractionNotice = useCallback((id: string) => {
+    setExtractionNotices((currentNotices) =>
+      currentNotices.filter((notice) => notice.id !== id)
+    )
+  }, [])
+
+  useEffect(() => {
+    const successNoticeIds = extractionNotices
+      .filter((notice) => notice.kind === "success")
+      .map((notice) => notice.id)
+
+    if (successNoticeIds.length === 0) {
+      return
+    }
+
+    const timeoutIds = successNoticeIds.map((id) =>
+      window.setTimeout(() => {
+        dismissExtractionNotice(id)
+      }, SUCCESS_NOTICE_DISMISS_DELAY_MS)
+    )
+
+    return () => {
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId)
+      }
+    }
+  }, [dismissExtractionNotice, extractionNotices])
+
+  const accountOptions = useMemo(() => {
+    const rowAccounts = rows
+      .map((row) => row.account)
+      .filter((account): account is string => account !== null)
+
+    return [
+      ...DEFAULT_ACCOUNT_OPTIONS,
+      ...rowAccounts.filter(
+        (account) => !DEFAULT_ACCOUNT_OPTIONS.includes(account)
+      ),
+    ]
+  }, [rows])
 
   useEffect(() => {
     let cancelled = false
@@ -310,199 +518,6 @@ export function TradeExtractor() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!needsUsdTwdFxSnapshot) {
-      setFxStatus("idle")
-      setFxIssue(null)
-      return
-    }
-
-    if (fxSnapshot) {
-      setFxStatus("ready")
-      return
-    }
-
-    let cancelled = false
-
-    async function loadFxSnapshot() {
-      setFxStatus("loading")
-      setFxIssue(null)
-
-      try {
-        const response = await fetch("/api/quotes/fx-rate", {
-          cache: "no-store",
-        })
-
-        if (!response.ok) {
-          throw new Error(await readErrorMessage(response))
-        }
-
-        const payload = await response.json()
-        const parsed = fxRateResponseSchema.safeParse(payload)
-
-        if (!parsed.success) {
-          throw new Error("The server returned an unexpected FX response.")
-        }
-
-        if (cancelled) {
-          return
-        }
-
-        setFxSnapshot(parsed.data.snapshot)
-        setFxStatus("ready")
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setFxStatus("error")
-        setFxIssue(getErrorMessage(error))
-      }
-    }
-
-    void loadFxSnapshot()
-
-    return () => {
-      cancelled = true
-    }
-  }, [fxSnapshot, needsUsdTwdFxSnapshot])
-
-  useEffect(() => {
-    if (aggregatedPortfolio.holdings.length === 0) {
-      setQuoteStatus("idle")
-      setQuoteRequestIssue(null)
-      return
-    }
-
-    if (missingQuoteTargets.length === 0) {
-      setQuoteStatus("ready")
-      return
-    }
-
-    let cancelled = false
-
-    async function loadPreviousCloses() {
-      setQuoteStatus("loading")
-      setQuoteRequestIssue(null)
-
-      try {
-        const response = await fetch("/api/quotes/previous-close", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ targets: missingQuoteTargets }),
-        })
-
-        if (!response.ok) {
-          throw new Error(await readErrorMessage(response))
-        }
-
-        const payload = await response.json()
-        const parsed = previousCloseResponseSchema.safeParse(payload)
-
-        if (!parsed.success) {
-          throw new Error("The server returned an unexpected price response.")
-        }
-
-        if (cancelled) {
-          return
-        }
-
-        setQuotesByKey((currentQuotes) => {
-          const nextQuotes = { ...currentQuotes }
-
-          for (const quote of parsed.data.quotes) {
-            nextQuotes[quote.key] = quote
-          }
-
-          return nextQuotes
-        })
-        setQuoteStatus("ready")
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setQuoteStatus("error")
-        setQuoteRequestIssue(getErrorMessage(error))
-      }
-    }
-
-    void loadPreviousCloses()
-
-    return () => {
-      cancelled = true
-    }
-  }, [aggregatedPortfolio.holdings.length, missingQuoteTargets])
-
-  useEffect(() => {
-    if (rows.length === 0) {
-      setDailyStatus("idle")
-      setDailyIssue(null)
-      setDailyBenchmarks({ spx: [], twii: [] })
-      setDailyCostBasis(null)
-      setDailySeries([])
-      return
-    }
-
-    let cancelled = false
-
-    async function loadDailyValues() {
-      setDailyStatus("loading")
-      setDailyIssue(null)
-      setDailyBenchmarks({ spx: [], twii: [] })
-      setDailyCostBasis(null)
-      setDailySeries([])
-
-      try {
-        const response = await fetch("/api/portfolio/daily-values", {
-          cache: "no-store",
-        })
-
-        if (!response.ok) {
-          throw new Error(await readErrorMessage(response))
-        }
-
-        const payload = await response.json()
-        const parsed = dailyValuesResponseSchema.safeParse(payload)
-
-        if (!parsed.success) {
-          throw new Error(
-            "The server returned an unexpected daily values response."
-          )
-        }
-
-        if (cancelled) {
-          return
-        }
-
-        setDailySeries(parsed.data.series)
-        setDailyCostBasis(parsed.data.costBasisTwd)
-        setDailyBenchmarks(parsed.data.benchmarks)
-        setDailyIssue(
-          parsed.data.issues.length > 0
-            ? `Missing history for: ${parsed.data.issues.join("; ")}`
-            : null
-        )
-        setDailyStatus("ready")
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setDailyStatus("error")
-        setDailyIssue(getErrorMessage(error))
-      }
-    }
-
-    void loadDailyValues()
-
-    return () => {
-      cancelled = true
-    }
-  }, [rows])
-
   const handleDeleteTrade = useCallback(async (id: string) => {
     setDeleteIssue(null)
 
@@ -531,17 +546,31 @@ export function TradeExtractor() {
   }, [])
 
   async function handleSubmit(message: PromptInputMessage) {
+    if (!selectedAccount) {
+      const issue = "Select the account these confirmations belong to."
+      setUploadIssue(issue)
+      throw new Error(issue)
+    }
+
     if (message.files.length === 0) {
       const issue = "Add at least one image or PDF before submitting."
       setUploadIssue(issue)
-      setSuccessMessage(null)
       throw new Error(issue)
     }
+
+    const account = selectedAccount
+    const fileDescription = formatFileList(message.files)
 
     setStatus("submitted")
     setUploadIssue(null)
     setIssues([])
-    setSuccessMessage(null)
+    setIngestOpen(false)
+    upsertExtractionNotice({
+      description: `Reading ${fileDescription}. You can keep using the dashboard.`,
+      id: RUNNING_EXTRACTION_NOTICE_ID,
+      kind: "running",
+      title: "Extracting confirmations",
+    })
 
     try {
       const response = await fetch("/api/trades/extract", {
@@ -550,7 +579,7 @@ export function TradeExtractor() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          account: selectedAccount,
+          account,
           prompt: message.text,
           files: message.files,
         }),
@@ -587,12 +616,24 @@ export function TradeExtractor() {
 
       setRows((currentRows) => mergeTradeRows(currentRows, nextRows))
       setIssues(nextIssues)
-      setSuccessMessage(
-        `Added ${nextRows.length} ${pluralize(nextRows.length, "trade")} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`
-      )
+      addCompletedExtractionNotice({
+        description: `Added ${nextRows.length} confirmation ${pluralize(
+          nextRows.length,
+          "record"
+        )} from ${successfulFiles} ${pluralize(successfulFiles, "file")}.`,
+        kind: "success",
+        title: "Records added",
+      })
     } catch (error) {
-      setSuccessMessage(null)
-      setUploadIssue(getErrorMessage(error))
+      const issue = getErrorMessage(error)
+
+      setUploadIssue(issue)
+      addCompletedExtractionNotice({
+        description: issue,
+        kind: "error",
+        title: "Extraction failed",
+      })
+      setIngestOpen(true)
 
       throw error
     } finally {
@@ -602,133 +643,179 @@ export function TradeExtractor() {
 
   return (
     <div className="grid gap-8">
-      {rows.length > 0 ? (
-        <PortfolioSummaryCards
-          fxSnapshot={fxSnapshot}
-          holdings={valuedPortfolio.holdings}
-        />
-      ) : null}
+      <ExtractionNoticeStack
+        notices={extractionNotices}
+        onDismiss={dismissExtractionNotice}
+        onOpenDrawer={() => setIngestOpen(true)}
+      />
 
-      {rows.length > 0 ? (
-        <AssetValueChart
-          benchmarks={dailyBenchmarks}
-          costBasisTwd={dailyCostBasis}
-          error={dailyIssue}
-          series={dailySeries}
-          status={dailyStatus}
-        />
-      ) : null}
-
-      <section className="space-y-4">
-        <div className="space-y-1">
-          <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
-            Ingest
-          </p>
-          <h2 className="text-lg font-medium tracking-tight">
-            Add confirmations
-          </h2>
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/80 px-4 py-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium tracking-[0.16em] text-primary uppercase">
+              Ingest
+            </p>
+            <span className="hidden min-w-0 flex-1 text-xs text-muted-foreground sm:inline">
+              Upload screenshots or PDFs from the correct account.
+            </span>
+          </div>
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <Building2 className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate text-muted-foreground">
+              {selectedAccount
+                ? `${selectedAccount} selected`
+                : "Choose an account in the drawer"}
+            </span>
+          </div>
         </div>
 
-        {accountOptions.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              Account
-            </span>
-            <ToggleGroup
-              onValueChange={(value) => setSelectedAccount(value || null)}
-              size="sm"
-              type="single"
-              value={selectedAccount ?? ""}
-              variant="outline"
-            >
-              {accountOptions.map((account) => (
-                <ToggleGroupItem key={account} value={account}>
-                  {account}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-        ) : null}
+        <div className="flex w-full flex-wrap items-center justify-end gap-3 lg:w-auto">
+          <PromptInputProvider>
+            <Sheet onOpenChange={setIngestOpen} open={ingestOpen}>
+              <SheetTrigger asChild>
+                <Button disabled={extractionRunning}>
+                  <Plus data-icon="inline-start" />
+                  {extractionRunning
+                    ? "Extraction running"
+                    : "Add confirmations"}
+                </Button>
+              </SheetTrigger>
+              <SheetContent
+                className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+                onInteractOutside={(event) => {
+                  if (isExtractionNoticeInteraction(event.target)) {
+                    event.preventDefault()
+                  }
+                }}
+                onPointerDownOutside={(event) => {
+                  if (isExtractionNoticeInteraction(event.target)) {
+                    event.preventDefault()
+                  }
+                }}
+                side="right"
+              >
+                <SheetHeader className="border-b">
+                  <SheetTitle>Add confirmations</SheetTitle>
+                  <SheetDescription>
+                    Select the account, upload screenshots or PDFs, then add the
+                    extracted records to history.
+                  </SheetDescription>
+                </SheetHeader>
 
-        {uploadIssue ? (
-          <Alert
-            className="border-destructive/30 bg-destructive/5"
-            variant="destructive"
-          >
-            <TriangleAlert className="size-4" />
-            <AlertTitle>
-              {issues.length > 0 ? "Review these files" : "Upload blocked"}
-            </AlertTitle>
-            <AlertDescription>
-              {issues.length > 0 ? (
-                <div className="flex flex-col gap-1">
-                  {issues.map((issue) => (
-                    <p key={issue}>{issue}</p>
-                  ))}
+                <div className="flex flex-col gap-5 px-4 pb-4">
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Account
+                    </span>
+                    <ToggleGroup
+                      className="flex flex-wrap justify-start"
+                      onValueChange={(value) =>
+                        setSelectedAccount(value || null)
+                      }
+                      size="sm"
+                      spacing={2}
+                      type="single"
+                      value={selectedAccount ?? ""}
+                      variant="outline"
+                    >
+                      {accountOptions.map((account) => (
+                        <ToggleGroupItem
+                          className="rounded-full border-2 aria-pressed:border-[#007AFF] data-[state=on]:border-[#007AFF]"
+                          key={account}
+                          value={account}
+                        >
+                          {account}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
+                  </div>
+
+                  {uploadIssue ? (
+                    <Alert
+                      className="border-destructive/30 bg-destructive/5"
+                      variant="destructive"
+                    >
+                      <TriangleAlert className="size-4" />
+                      <AlertTitle>
+                        {issues.length > 0
+                          ? "Review these files"
+                          : "Upload blocked"}
+                      </AlertTitle>
+                      <AlertDescription>
+                        {issues.length > 0 ? (
+                          <div className="flex flex-col gap-1">
+                            {issues.map((issue) => (
+                              <p key={issue}>{issue}</p>
+                            ))}
+                          </div>
+                        ) : (
+                          uploadIssue
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  <PromptInput
+                    accept={UPLOAD_ACCEPT}
+                    inputGroupClassName="surface-upload rounded-xl border-primary/20"
+                    maxFiles={MAX_FILES}
+                    maxFileSize={MAX_FILE_SIZE_BYTES}
+                    multiple
+                    onError={(error) => {
+                      setUploadIssue(formatPromptInputError(error.code))
+                      setIssues([])
+                      setExtractionNotices((currentNotices) =>
+                        currentNotices.filter(
+                          (notice) => notice.id !== RUNNING_EXTRACTION_NOTICE_ID
+                        )
+                      )
+                    }}
+                    onSubmit={handleSubmit}
+                  >
+                    <PromptInputHeader className="px-4 py-4">
+                      <AttachmentTray />
+                    </PromptInputHeader>
+                    <PromptInputBody>
+                      <OptionalNote />
+                    </PromptInputBody>
+                    <PromptInputFooter className="border-t px-4 py-3">
+                      <PromptInputTools>
+                        <span className="text-xs text-muted-foreground">
+                          {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
+                          {MAX_BATCH_SIZE_LABEL} total
+                        </span>
+                      </PromptInputTools>
+                      <PromptInputSubmit
+                        className="shadow-primary-soft"
+                        disabled={status !== "ready" || !selectedAccount}
+                        size="sm"
+                        status={status}
+                      >
+                        {status === "ready" ? "Add" : "Adding..."}
+                      </PromptInputSubmit>
+                    </PromptInputFooter>
+                  </PromptInput>
+
+                  {!selectedAccount ? (
+                    <p className="text-xs text-muted-foreground">
+                      Select an account to enable adding confirmations.
+                    </p>
+                  ) : null}
                 </div>
-              ) : (
-                uploadIssue
-              )}
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        <PromptInput
-          accept={UPLOAD_ACCEPT}
-          inputGroupClassName="surface-upload rounded-xl border-primary/20"
-          maxFiles={MAX_FILES}
-          maxFileSize={MAX_FILE_SIZE_BYTES}
-          multiple
-          onError={(error) => {
-            setUploadIssue(formatPromptInputError(error.code))
-            setIssues([])
-            setSuccessMessage(null)
-          }}
-          onSubmit={handleSubmit}
-        >
-          <PromptInputHeader className="px-4 py-4">
-            <AttachmentTray />
-          </PromptInputHeader>
-          <PromptInputBody>
-            <OptionalNote />
-          </PromptInputBody>
-          <PromptInputFooter className="border-t px-4 py-3">
-            <PromptInputTools>
-              <span className="text-xs text-muted-foreground">
-                {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
-                {MAX_BATCH_SIZE_LABEL} total
-              </span>
-            </PromptInputTools>
-            <PromptInputSubmit
-              className="shadow-primary-soft"
-              disabled={status !== "ready"}
-              size="sm"
-              status={status}
-            >
-              {status === "ready" ? "Extract trades" : "Extracting..."}
-            </PromptInputSubmit>
-          </PromptInputFooter>
-        </PromptInput>
+              </SheetContent>
+            </Sheet>
+          </PromptInputProvider>
+        </div>
       </section>
 
-      {rows.length > 0 ? (
-        <HoldingsTable
-          fxIssue={fxIssue}
-          fxSnapshot={fxSnapshot}
-          fxStatus={fxStatus}
-          groups={valuedPortfolio.groups}
-          holdings={valuedPortfolio.holdings}
-          issues={aggregatedPortfolio.issues}
-          requestError={quoteRequestIssue}
-        />
-      ) : null}
+      <PortfolioSnapshot rows={rows} />
 
       <TradesTable
-        issues={successMessage ? issues : []}
+        issues={issues}
         onDelete={handleDeleteTrade}
         restoreIssue={deleteIssue ?? restoreIssue}
         rows={rows}
-        successMessage={successMessage}
+        successMessage={null}
       />
     </div>
   )

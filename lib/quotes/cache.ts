@@ -95,11 +95,15 @@ async function ensureQuoteCacheFile(filePath: string) {
 }
 
 /** Serialize all cache file access to prevent concurrent read-modify-write corruption. */
-let cacheFileLock: Promise<void> = Promise.resolve()
+const quoteCacheGlobal = globalThis as typeof globalThis & {
+  __vellumQuoteCacheLock?: Promise<void>
+}
 
 function withCacheLock<T>(fn: () => Promise<T>): Promise<T> {
-  const pending = cacheFileLock.then(fn)
-  cacheFileLock = pending.then(
+  const currentLock =
+    quoteCacheGlobal.__vellumQuoteCacheLock ?? Promise.resolve()
+  const pending = currentLock.then(fn)
+  quoteCacheGlobal.__vellumQuoteCacheLock = pending.then(
     () => undefined,
     () => undefined
   )

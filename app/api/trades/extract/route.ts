@@ -11,9 +11,11 @@ import { extractTradesFromFile } from "@/lib/trades/extract"
 import {
   computeTradeTotalAmount,
   extractTradesRequestSchema,
+  type ExtractedTrade,
   type FileExtractionResult,
   type TradeTableRow,
 } from "@/lib/trades/schema"
+import { resolveExtractedTradeTicker } from "@/lib/trades/resolve-ticker"
 import { appendStoredTradeRows } from "@/lib/trades/storage"
 
 export const maxDuration = 60
@@ -27,6 +29,14 @@ function getDataUrlByteLength(dataUrl: string) {
   }
 
   return Buffer.from(dataUrl.slice(commaIndex + 1), "base64").byteLength
+}
+
+function getUploadByteLength(dataUrl: string) {
+  try {
+    return getDataUrlByteLength(dataUrl)
+  } catch {
+    return null
+  }
 }
 
 function validateUploads(files: Array<{ mediaType: string; url: string }>) {
@@ -55,6 +65,28 @@ function validateUploads(files: Array<{ mediaType: string; url: string }>) {
   }
 
   return null
+}
+
+async function resolveTickerForResult(result: FileExtractionResult) {
+  const resolvedTrades: ExtractedTrade[] = []
+  const issues: string[] = []
+
+  for (const trade of result.trades) {
+    const resolution = await resolveExtractedTradeTicker({ trade })
+
+    if (resolution.status === "accepted") {
+      resolvedTrades.push(resolution.trade)
+      continue
+    }
+
+    issues.push(resolution.issue)
+  }
+
+  return {
+    ...result,
+    error: [result.error, ...issues].filter(Boolean).join(" ") || undefined,
+    trades: resolvedTrades,
+  }
 }
 
 export async function POST(request: Request) {
@@ -88,8 +120,25 @@ export async function POST(request: Request) {
 
   for (const file of parsed.data.files) {
     results.push(
-      await extractTradesFromFile({ file, prompt: parsed.data.prompt })
+      await resolveTickerForResult(
+        await extractTradesFromFile({ file, prompt: parsed.data.prompt })
+      )
     )
+  }
+
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index]
+    const file = parsed.data.files[index]
+
+    if (result.error || result.trades.length === 0) {
+      console.warn("[trades/extract] no persisted trades for uploaded file", {
+        error: result.error ?? null,
+        fileName: result.fileName,
+        mediaType: file?.mediaType ?? null,
+        sizeBytes: file ? getUploadByteLength(file.url) : null,
+        tradeCount: result.trades.length,
+      })
+    }
   }
 
   const account = parsed.data.account ?? null
@@ -105,12 +154,14 @@ export async function POST(request: Request) {
       side: trade.side,
       sourceFile: result.fileName,
       ticker: trade.ticker,
-      totalAmount: computeTradeTotalAmount({
-        fee: trade.fee,
-        price: trade.price,
-        quantity: trade.quantity,
-        side: trade.side,
-      }),
+      totalAmount:
+        trade.settlementAmount ??
+        computeTradeTotalAmount({
+          fee: trade.fee,
+          price: trade.price,
+          quantity: trade.quantity,
+          side: trade.side,
+        }),
     }))
   )
 

@@ -195,17 +195,17 @@ export const TradesTable = memo(function TradesTable({
             Review
           </p>
           <h2 className="text-lg font-medium tracking-tight">
-            Review extracted trades
+            History confirmation records
           </h2>
         </div>
         <p className="text-sm text-secondary-foreground/80">
-          {rows.length} {rows.length === 1 ? "row" : "rows"} saved
+          {rows.length} {rows.length === 1 ? "record" : "records"} saved
         </p>
       </div>
 
       {successMessage ? (
         <Alert className="border-primary/20 bg-primary/10">
-          <AlertTitle className="text-primary">Rows added</AlertTitle>
+          <AlertTitle className="text-primary">Records added</AlertTitle>
           <AlertDescription className="text-primary">
             {successMessage}
           </AlertDescription>
@@ -243,7 +243,7 @@ export const TradesTable = memo(function TradesTable({
       <div className="surface-review overflow-hidden rounded-xl border border-secondary/35 bg-background/95">
         {rows.length === 0 ? (
           <div className="px-4 py-12 text-center text-muted-foreground">
-            No trades yet.
+            No confirmation records yet.
           </div>
         ) : (
           <>

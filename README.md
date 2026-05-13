@@ -23,7 +23,7 @@ pnpm install
 pnpm dev
 ```
 
-The app runs at `http://localhost:3000`. Data is stored locally in `data/` as JSON files -- no database required.
+The app runs at `http://localhost:3000`. Trade data is stored locally in `data/transactions.sqlite`; the SQLite database and schema are created automatically on first read or write. Legacy `data/transactions.json` data is migrated when the SQLite store is empty.
 
 ## Scripts
 

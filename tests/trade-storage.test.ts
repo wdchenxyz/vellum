@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it } from "vitest"
 import {
   appendStoredTradeRows,
   deleteStoredTradeRows,
-  getTradeStoreFilePath,
+  getLegacyTradeStoreFilePath,
+  getTradeStoreDatabasePath,
   readStoredTradeRows,
 } from "@/lib/trades/storage"
 
@@ -35,7 +36,7 @@ function makeRow(
 async function createTempStorePath() {
   const directory = await mkdtemp(path.join(tmpdir(), "vellum-trades-"))
   tempDirectories.push(directory)
-  return getTradeStoreFilePath(directory)
+  return getTradeStoreDatabasePath(directory)
 }
 
 afterEach(async () => {
@@ -47,26 +48,26 @@ afterEach(async () => {
 })
 
 describe("trade storage", () => {
-  it("creates an empty JSON text file on first read", async () => {
-    const filePath = await createTempStorePath()
+  it("creates an empty SQLite database on first read", async () => {
+    const databasePath = await createTempStorePath()
 
-    const rows = await readStoredTradeRows(filePath)
-    const rawContent = await readFile(filePath, "utf8")
+    const rows = await readStoredTradeRows(databasePath)
+    const rawContent = await readFile(databasePath)
 
     expect(rows).toEqual([])
-    expect(rawContent.trim()).toBe("[]")
+    expect(rawContent.subarray(0, 16).toString()).toBe("SQLite format 3\0")
   })
 
   it("appends transactions and keeps them available across reads", async () => {
-    const filePath = await createTempStorePath()
+    const databasePath = await createTempStorePath()
 
-    await appendStoredTradeRows([makeRow("row_1")], filePath)
+    await appendStoredTradeRows([makeRow("row_1")], databasePath)
     await appendStoredTradeRows(
       [makeRow("row_2", { ticker: "MSFT" })],
-      filePath
+      databasePath
     )
 
-    const rows = await readStoredTradeRows(filePath)
+    const rows = await readStoredTradeRows(databasePath)
 
     expect(rows).toEqual([
       makeRow("row_1"),
@@ -75,21 +76,21 @@ describe("trade storage", () => {
   })
 
   it("deletes a single row by id", async () => {
-    const filePath = await createTempStorePath()
+    const databasePath = await createTempStorePath()
 
     await appendStoredTradeRows(
       [makeRow("row_1"), makeRow("row_2", { ticker: "MSFT" })],
-      filePath
+      databasePath
     )
 
-    const remaining = await deleteStoredTradeRows(["row_1"], filePath)
+    const remaining = await deleteStoredTradeRows(["row_1"], databasePath)
 
     expect(remaining).toEqual([makeRow("row_2", { ticker: "MSFT" })])
-    expect(await readStoredTradeRows(filePath)).toEqual(remaining)
+    expect(await readStoredTradeRows(databasePath)).toEqual(remaining)
   })
 
   it("deletes multiple rows at once", async () => {
-    const filePath = await createTempStorePath()
+    const databasePath = await createTempStorePath()
 
     await appendStoredTradeRows(
       [
@@ -97,39 +98,44 @@ describe("trade storage", () => {
         makeRow("row_2", { ticker: "MSFT" }),
         makeRow("row_3", { ticker: "GOOG" }),
       ],
-      filePath
+      databasePath
     )
 
-    const remaining = await deleteStoredTradeRows(["row_1", "row_3"], filePath)
+    const remaining = await deleteStoredTradeRows(
+      ["row_1", "row_3"],
+      databasePath
+    )
 
     expect(remaining).toEqual([makeRow("row_2", { ticker: "MSFT" })])
   })
 
   it("returns all rows unchanged when deleting a non-existent id", async () => {
-    const filePath = await createTempStorePath()
+    const databasePath = await createTempStorePath()
 
-    await appendStoredTradeRows([makeRow("row_1")], filePath)
+    await appendStoredTradeRows([makeRow("row_1")], databasePath)
 
-    const remaining = await deleteStoredTradeRows(["no-such-id"], filePath)
+    const remaining = await deleteStoredTradeRows(["no-such-id"], databasePath)
 
     expect(remaining).toEqual([makeRow("row_1")])
   })
 
   it("handles deleting from an empty store", async () => {
-    const filePath = await createTempStorePath()
+    const databasePath = await createTempStorePath()
 
-    const remaining = await deleteStoredTradeRows(["row_1"], filePath)
+    const remaining = await deleteStoredTradeRows(["row_1"], databasePath)
 
     expect(remaining).toEqual([])
   })
 
-  it("normalizes legacy rows without account or totalAmount", async () => {
-    const filePath = await createTempStorePath()
+  it("migrates and normalizes legacy JSON rows without account or totalAmount", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "vellum-trades-"))
+    tempDirectories.push(directory)
+    const databasePath = getTradeStoreDatabasePath(directory)
+    const legacyPath = getLegacyTradeStoreFilePath(directory)
 
-    await readStoredTradeRows(filePath)
-
+    await mkdir(path.dirname(legacyPath), { recursive: true })
     await writeFile(
-      filePath,
+      legacyPath,
       `${JSON.stringify([
         {
           currency: "USD",
@@ -146,7 +152,7 @@ describe("trade storage", () => {
       "utf8"
     )
 
-    const rows = await readStoredTradeRows(filePath)
+    const rows = await readStoredTradeRows(databasePath)
 
     expect(rows).toEqual([
       {

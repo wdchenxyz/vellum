@@ -8,6 +8,8 @@ export const previousCloseLookupTargetSchema = z.object({
 })
 
 export const previousCloseRequestSchema = z.object({
+  forceRefresh: z.boolean().optional().default(false),
+  returnCachedImmediately: z.boolean().optional().default(false),
   targets: z.array(previousCloseLookupTargetSchema).min(1).max(40),
 })
 

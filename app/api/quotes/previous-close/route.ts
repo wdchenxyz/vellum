@@ -6,7 +6,7 @@ import {
 } from "@/lib/portfolio/schema"
 import { fetchPreviousCloseSnapshots } from "@/lib/quotes/twelve-data"
 
-export const maxDuration = 30
+export const maxDuration = 60
 
 function dedupeTargets(targets: PreviousCloseLookupTarget[]) {
   const seen = new Set<string>()
@@ -52,7 +52,12 @@ export async function POST(request: Request) {
 
   try {
     const quotes = await fetchPreviousCloseSnapshots(
-      dedupeTargets(parsed.data.targets)
+      dedupeTargets(parsed.data.targets),
+      fetch,
+      {
+        forceRefresh: parsed.data.forceRefresh,
+        returnCachedImmediately: parsed.data.returnCachedImmediately,
+      }
     )
 
     return NextResponse.json({ quotes })
