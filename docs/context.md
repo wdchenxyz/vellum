@@ -9,6 +9,14 @@
 
 ## Language
 
+**Investment Workspace**:
+A local-first product surface for trade capture, portfolio review, and lightweight portfolio intelligence.
+_Avoid_: Portfolio tracker, trade-capture app, dashboard
+
+**Local-first**:
+Vellum stores portfolio data on the user's device rather than in a hosted account system.
+_Avoid_: Offline-first, private cloud, no backend
+
 **Trade**:
 A single executed BUY or SELL event from a broker confirmation.
 _Avoid_: Transaction, order, row
@@ -95,6 +103,14 @@ _Avoid_: Exchange, region, country
 The latest available closing price used to value current holdings.
 _Avoid_: Live price, current price, quote
 
+**Market Data**:
+External price, FX, and benchmark inputs used to value holdings and compare portfolio performance.
+_Avoid_: Quote data, news, trends
+
+**Market Context**:
+External news, trends, and prediction market signals used to explain or investigate portfolio-relevant events.
+_Avoid_: Market data, research, sentiment
+
 **Unrealized P&L**:
 The difference between a holding's previous-close market value and its open cost basis.
 _Avoid_: Gain, profit, return
@@ -115,6 +131,35 @@ _Avoid_: Chatbot, chat drawer, AI assistant
 
 - Current implementation saves extracted trades immediately; intended language distinguishes **Proposed Trade** from **Saved Trade** so a future review-before-save flow has clear terms.
 - Cash balance is out of scope for now; **Portfolio Value** includes open holdings only and excludes uninvested cash or proceeds from sells.
+
+## Relationships
+
+- A **Trade Confirmation** produces zero or more **Proposed Trades** through **Extraction**.
+- A **Proposed Trade** becomes a **Saved Trade** when accepted into **Trade History**.
+- **Trade History** contains all **Saved Trades**, including trades that no longer contribute to open holdings.
+- A **Holding** is derived from saved BUY and SELL trades for one **Instrument** in one **Brokerage Account**.
+- A **Portfolio** aggregates holdings across all brokerage accounts.
+- **Portfolio Value** is calculated from open holdings using **Previous Close** and **Reporting Currency**.
+- **Unrealized P&L** compares a holding's previous-close market value against its **Cost Basis**.
+- **Market Data** supplies previous close, FX, price history, and benchmark inputs.
+- A **Benchmark** compares portfolio performance after adjusting for the portfolio's trade cash flows.
+- An **Exposure Profile** maps an instrument to underlying exposure; **Exposure** and **Exposure Weight** apply that profile.
+- A **Portfolio Snapshot** summarizes current holdings, portfolio value, and exposure.
+- The **Portfolio Assistant** can answer from trade history, holdings, portfolio value, exposure, benchmarks, FX, and market context.
+
+## Example Dialogue
+
+> **Dev:** "If the user uploads a Firstrade PDF with two fills, do we create two **Trades**?"
+> **Domain expert:** "The PDF is one **Trade Confirmation**. **Extraction** may produce two **Proposed Trades**. Once accepted, those become **Saved Trades** in **Trade History**."
+>
+> **Dev:** "If the same ticker appears in Firstrade and 元大複委託, is that one **Holding**?"
+> **Domain expert:** "No. A **Holding** belongs to one **Brokerage Account**. The **Portfolio** aggregates both holdings."
+>
+> **Dev:** "Should the **Portfolio Value** include cash from past sells?"
+> **Domain expert:** "No. Cash balance is out of scope for now; **Portfolio Value** is based only on open holdings valued with **Previous Close**."
+>
+> **Dev:** "Why does NVDL show a different **Exposure Weight** than **Weight**?"
+> **Domain expert:** "Its **Exposure Profile** maps it to 2x long NVDA exposure, so **Weight** reflects market value while **Exposure Weight** reflects effective long exposure."
 
 ## Product Surface
 
