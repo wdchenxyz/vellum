@@ -10,6 +10,7 @@ import {
   getLegacyTradeStoreFilePath,
   getTradeStoreDatabasePath,
   readStoredTradeRows,
+  updateStoredTradeRow,
 } from "@/lib/trades/storage"
 
 const tempDirectories: string[] = []
@@ -107,6 +108,60 @@ describe("trade storage", () => {
     )
 
     expect(remaining).toEqual([makeRow("row_2", { ticker: "MSFT" })])
+  })
+
+  it("updates a saved trade while preserving its id and insertion order", async () => {
+    const databasePath = await createTempStorePath()
+
+    await appendStoredTradeRows(
+      [makeRow("row_1"), makeRow("row_2", { ticker: "MSFT" })],
+      databasePath
+    )
+
+    const { id: _id, ...editedRow } = makeRow("row_1", {
+      account: "Firstrade",
+      ticker: "NVDA",
+    })
+    void _id
+    const rows = await updateStoredTradeRow(
+      "row_1",
+      {
+        ...editedRow,
+        date: "2026-03-18",
+        price: 900,
+        quantity: 3,
+        side: "SELL",
+        totalAmount: 2700,
+      },
+      databasePath
+    )
+
+    expect(rows).toEqual([
+      {
+        ...makeRow("row_1", { account: "Firstrade", ticker: "NVDA" }),
+        date: "2026-03-18",
+        price: 900,
+        quantity: 3,
+        side: "SELL",
+        totalAmount: 2700,
+      },
+      makeRow("row_2", { ticker: "MSFT" }),
+    ])
+  })
+
+  it("rejects updates for a missing saved trade", async () => {
+    const databasePath = await createTempStorePath()
+    const { id: _id, ...editedRow } = makeRow("missing-row")
+    void _id
+
+    await appendStoredTradeRows([makeRow("row_1")], databasePath)
+
+    await expect(
+      updateStoredTradeRow("missing-row", editedRow, databasePath)
+    ).rejects.toThrow("The requested trade was not found.")
+    await expect(readStoredTradeRows(databasePath)).resolves.toEqual([
+      makeRow("row_1"),
+    ])
   })
 
   it("returns all rows unchanged when deleting a non-existent id", async () => {

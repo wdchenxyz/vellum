@@ -49,6 +49,7 @@ import {
   deleteTradesResponseSchema,
   extractTradesResponseSchema,
   tradeRowsResponseSchema,
+  updateTradeResponseSchema,
   type ExtractTradesResponse,
   type TradeTableRow,
 } from "@/lib/trades/schema"
@@ -399,7 +400,7 @@ export function TradeExtractor() {
   const [issues, setIssues] = useState<string[]>([])
   const [restoreIssue, setRestoreIssue] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
-  const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
+  const [mutationIssue, setMutationIssue] = useState<string | null>(null)
   const [extractionNotices, setExtractionNotices] = useState<
     ExtractionNotice[]
   >([])
@@ -519,7 +520,7 @@ export function TradeExtractor() {
   }, [])
 
   const handleDeleteTrade = useCallback(async (id: string) => {
-    setDeleteIssue(null)
+    setMutationIssue(null)
 
     const response = await fetch("/api/trades/rows", {
       method: "DELETE",
@@ -529,7 +530,7 @@ export function TradeExtractor() {
 
     if (!response.ok) {
       const message = await readErrorMessage(response)
-      setDeleteIssue(message)
+      setMutationIssue(message)
       throw new Error(message)
     }
 
@@ -538,7 +539,35 @@ export function TradeExtractor() {
 
     if (!parsed.success) {
       const message = "The server returned an unexpected response."
-      setDeleteIssue(message)
+      setMutationIssue(message)
+      throw new Error(message)
+    }
+
+    setRows(parsed.data.rows)
+  }, [])
+
+  const handleUpdateTrade = useCallback(async (row: TradeTableRow) => {
+    setMutationIssue(null)
+
+    const { id, ...editableRow } = row
+    const response = await fetch("/api/trades/rows", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, row: editableRow }),
+    })
+
+    if (!response.ok) {
+      const message = await readErrorMessage(response)
+      setMutationIssue(message)
+      throw new Error(message)
+    }
+
+    const payload = await response.json()
+    const parsed = updateTradeResponseSchema.safeParse(payload)
+
+    if (!parsed.success) {
+      const message = "The server returned an unexpected response."
+      setMutationIssue(message)
       throw new Error(message)
     }
 
@@ -811,9 +840,10 @@ export function TradeExtractor() {
       <PortfolioSnapshot rows={rows} />
 
       <TradesTable
+        historyIssue={mutationIssue ?? restoreIssue}
         issues={issues}
         onDelete={handleDeleteTrade}
-        restoreIssue={deleteIssue ?? restoreIssue}
+        onUpdate={handleUpdateTrade}
         rows={rows}
         successMessage={null}
       />
