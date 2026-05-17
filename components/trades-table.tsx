@@ -514,7 +514,7 @@ export const TradesTable = memo(function TradesTable({
 }: TradesTableProps) {
   const [deleteTarget, setDeleteTarget] = useState<TradeTableRow | null>(null)
   const [editTarget, setEditTarget] = useState<TradeTableRow | null>(null)
-  const [isExpanded, setIsExpanded] = useState(true)
+  const [isExpanded, setIsExpanded] = useState(false)
 
   const sortedRows = useMemo(() => {
     return rows
@@ -558,30 +558,35 @@ export const TradesTable = memo(function TradesTable({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <button
-          aria-controls="trades-history-body"
-          aria-expanded={isExpanded}
-          className="group flex items-start gap-2 text-left"
-          onClick={() => setIsExpanded((current) => !current)}
-          type="button"
-        >
-          {isExpanded ? (
-            <ChevronDown className="mt-5 size-4 text-secondary-foreground transition-transform" />
-          ) : (
-            <ChevronRight className="mt-5 size-4 text-secondary-foreground transition-transform" />
-          )}
-          <div className="space-y-1">
-            <p className="text-xs font-medium tracking-[0.16em] text-secondary-foreground uppercase">
-              Review
-            </p>
-            <h2 className="text-lg font-medium tracking-tight group-hover:text-foreground/80">
-              History confirmation records
-            </h2>
-          </div>
-        </button>
-        <p className="text-sm text-secondary-foreground/80">
-          {rows.length} {rows.length === 1 ? "record" : "records"} saved
-        </p>
+        <div className="space-y-1">
+          <p className="text-xs font-medium tracking-[0.16em] text-secondary-foreground uppercase">
+            Review
+          </p>
+          <h2 className="text-lg font-medium tracking-tight">
+            History confirmation records
+          </h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-secondary-foreground/80">
+            {rows.length} {rows.length === 1 ? "record" : "records"} saved
+          </p>
+          <Button
+            aria-controls="trades-history-body"
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? "Collapse trade history" : "Expand trade history"}
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => setIsExpanded((current) => !current)}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            {isExpanded ? (
+              <ChevronDown className="size-3.5" />
+            ) : (
+              <ChevronRight className="size-3.5" />
+            )}
+          </Button>
+        </div>
       </div>
 
       {successMessage ? (
