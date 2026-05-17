@@ -1,4 +1,11 @@
-import { FormEvent, memo, useCallback, useEffect, useState } from "react"
+import {
+  FormEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -33,7 +40,7 @@ import {
   computeTradeTotalAmount,
   type TradeTableRow,
 } from "@/lib/trades/schema"
-import { Pencil, Trash2, TriangleAlert } from "lucide-react"
+import { ChevronDown, ChevronRight, Pencil, Trash2, TriangleAlert } from "lucide-react"
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 8,
@@ -507,6 +514,19 @@ export const TradesTable = memo(function TradesTable({
 }: TradesTableProps) {
   const [deleteTarget, setDeleteTarget] = useState<TradeTableRow | null>(null)
   const [editTarget, setEditTarget] = useState<TradeTableRow | null>(null)
+  const [isExpanded, setIsExpanded] = useState(true)
+
+  const sortedRows = useMemo(() => {
+    return rows
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        if (a.row.date !== b.row.date) {
+          return a.row.date < b.row.date ? 1 : -1
+        }
+        return b.index - a.index
+      })
+      .map(({ row }) => row)
+  }, [rows])
 
   const handleDeleteOpenChange = useCallback((open: boolean) => {
     if (!open) {
@@ -538,14 +558,27 @@ export const TradesTable = memo(function TradesTable({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-xs font-medium tracking-[0.16em] text-secondary-foreground uppercase">
-            Review
-          </p>
-          <h2 className="text-lg font-medium tracking-tight">
-            History confirmation records
-          </h2>
-        </div>
+        <button
+          aria-controls="trades-history-body"
+          aria-expanded={isExpanded}
+          className="group flex items-start gap-2 text-left"
+          onClick={() => setIsExpanded((current) => !current)}
+          type="button"
+        >
+          {isExpanded ? (
+            <ChevronDown className="mt-5 size-4 text-secondary-foreground transition-transform" />
+          ) : (
+            <ChevronRight className="mt-5 size-4 text-secondary-foreground transition-transform" />
+          )}
+          <div className="space-y-1">
+            <p className="text-xs font-medium tracking-[0.16em] text-secondary-foreground uppercase">
+              Review
+            </p>
+            <h2 className="text-lg font-medium tracking-tight group-hover:text-foreground/80">
+              History confirmation records
+            </h2>
+          </div>
+        </button>
         <p className="text-sm text-secondary-foreground/80">
           {rows.length} {rows.length === 1 ? "record" : "records"} saved
         </p>
@@ -588,7 +621,11 @@ export const TradesTable = memo(function TradesTable({
         </Alert>
       ) : null}
 
-      <div className="surface-review overflow-hidden rounded-xl border border-secondary/35 bg-background/95">
+      <div
+        className="surface-review overflow-hidden rounded-xl border border-secondary/35 bg-background/95"
+        hidden={!isExpanded}
+        id="trades-history-body"
+      >
         {rows.length === 0 ? (
           <div className="px-4 py-12 text-center text-muted-foreground">
             No confirmation records yet.
@@ -596,7 +633,7 @@ export const TradesTable = memo(function TradesTable({
         ) : (
           <>
             <div className="space-y-3 p-3 md:hidden">
-              {rows.map((row) => (
+              {sortedRows.map((row) => (
                 <TradeSummaryCard
                   key={row.id}
                   onDeleteClick={() => setDeleteTarget(row)}
@@ -624,7 +661,7 @@ export const TradesTable = memo(function TradesTable({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((row) => (
+                  {sortedRows.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell className="font-medium tabular-nums">
                         {row.date}
