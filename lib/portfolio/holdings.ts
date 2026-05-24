@@ -236,7 +236,8 @@ function buildValuedHolding(
   holding: AggregatedHolding,
   quote: PreviousCloseQuote | undefined
 ): ValuedHolding {
-  const currency = normalizeCurrency(quote?.currency) ?? holding.currency
+  const currency =
+    normalizeCurrency(quote?.currency ?? null) ?? holding.currency
   const previousClose = quote?.previousClose ?? null
   const marketValue =
     previousClose === null
@@ -406,6 +407,47 @@ type ResolvedHoldingTrade = {
   ticker: string
 }
 
+type ResolvedHoldingIdentity = {
+  account: string | null
+  expectedCurrency: string
+  key: string
+  market: SupportedMarket
+  quoteKey: string
+  ticker: string
+}
+
+type HoldingAggregationIssue = {
+  message: string
+  recoverableSameDayOversell: boolean
+}
+
+function isHoldingAggregationIssue(
+  value:
+    | AggregatedHolding
+    | HoldingAggregationIssue
+    | ResolvedHoldingIdentity
+    | ResolvedHoldingTrade
+    | null
+): value is HoldingAggregationIssue {
+  return value !== null && "message" in value
+}
+
+function createUnsupportedHoldingIssue(
+  message: string
+): HoldingAggregationIssue {
+  return {
+    message,
+    recoverableSameDayOversell: false,
+  }
+}
+
+function createSameDayOversellIssue(ticker: string): HoldingAggregationIssue {
+  return {
+    message: `${ticker}: sell quantity exceeds open quantity, so this position is excluded from valuation.`,
+    recoverableSameDayOversell: true,
+  }
+}
+
 function createAggregatedHolding({
   account,
   expectedCurrency,
@@ -434,10 +476,9 @@ function createAggregatedHolding({
   }
 }
 
-function resolveHoldingTrade(
-  trade: PortfolioTradeRow,
-  positions: Map<string, AggregatedHolding>
-): ResolvedHoldingTrade | string {
+function resolveHoldingIdentity(
+  trade: PortfolioTradeRow
+): HoldingAggregationIssue | ResolvedHoldingIdentity {
   const ticker = normalizeTicker(trade.ticker)
   const market = inferSupportedMarket({
     ticker,
@@ -445,14 +486,18 @@ function resolveHoldingTrade(
   })
 
   if (!market) {
-    return `${ticker}: only US and Taiwan markets are supported in this MVP.`
+    return createUnsupportedHoldingIssue(
+      `${ticker}: only US and Taiwan markets are supported in this MVP.`
+    )
   }
 
   const expectedCurrency = getDefaultCurrency(market)
   const normalizedCurrency = normalizeCurrency(trade.currency)
 
   if (normalizedCurrency && normalizedCurrency !== expectedCurrency) {
-    return `${ticker}: ${normalizedCurrency} transactions are outside the supported US/TW scope.`
+    return createUnsupportedHoldingIssue(
+      `${ticker}: ${normalizedCurrency} transactions are outside the supported US/TW scope.`
+    )
   }
 
   const account = normalizeAccount(trade.account)
@@ -460,18 +505,38 @@ function resolveHoldingTrade(
   const key = getHoldingKey({ account, ticker, market })
 
   return {
-    current:
-      positions.get(key) ??
-      createAggregatedHolding({
-        account,
-        expectedCurrency,
-        key,
-        market,
-        quoteKey,
-        ticker,
-      }),
+    account,
+    expectedCurrency,
     key,
+    market,
+    quoteKey,
     ticker,
+  }
+}
+
+function resolveHoldingTrade(
+  trade: PortfolioTradeRow,
+  positions: Map<string, AggregatedHolding>
+): HoldingAggregationIssue | ResolvedHoldingTrade {
+  const identity = resolveHoldingIdentity(trade)
+
+  if (isHoldingAggregationIssue(identity)) {
+    return identity
+  }
+
+  return {
+    current:
+      positions.get(identity.key) ??
+      createAggregatedHolding({
+        account: identity.account,
+        expectedCurrency: identity.expectedCurrency,
+        key: identity.key,
+        market: identity.market,
+        quoteKey: identity.quoteKey,
+        ticker: identity.ticker,
+      }),
+    key: identity.key,
+    ticker: identity.ticker,
   }
 }
 
@@ -494,9 +559,9 @@ function buildSoldHolding(
   current: AggregatedHolding,
   trade: PortfolioTradeRow,
   ticker: string
-): AggregatedHolding | null | string {
+): AggregatedHolding | HoldingAggregationIssue | null {
   if (trade.quantity > current.quantityOpen + FLOAT_EPSILON) {
-    return `${ticker}: sell quantity exceeds open quantity, so this position is excluded from valuation.`
+    return createSameDayOversellIssue(ticker)
   }
 
   const currentAverageCost =
@@ -518,39 +583,169 @@ function buildSoldHolding(
   }
 }
 
+function applyTradeToPositions(
+  trade: PortfolioTradeRow,
+  positions: Map<string, AggregatedHolding>
+) {
+  const resolvedTrade = resolveHoldingTrade(trade, positions)
+
+  if (isHoldingAggregationIssue(resolvedTrade)) {
+    return resolvedTrade
+  }
+
+  const { current, key, ticker } = resolvedTrade
+
+  if (trade.side === "BUY") {
+    positions.set(key, buildBoughtHolding(current, trade))
+    return null
+  }
+
+  const nextHolding = buildSoldHolding(current, trade, ticker)
+
+  if (isHoldingAggregationIssue(nextHolding)) {
+    positions.delete(key)
+    return nextHolding
+  }
+
+  if (nextHolding === null) {
+    positions.delete(key)
+    return null
+  }
+
+  positions.set(key, nextHolding)
+  return null
+}
+
+function applyTradesToPositions(
+  trades: PortfolioTradeRow[],
+  initialPositions: Map<string, AggregatedHolding>
+) {
+  const positions = new Map(initialPositions)
+  const issues: HoldingAggregationIssue[] = []
+
+  for (const trade of trades) {
+    const issue = applyTradeToPositions(trade, positions)
+
+    if (issue) {
+      issues.push(issue)
+    }
+  }
+
+  return { issues, positions }
+}
+
+function countRecoverableSameDayOversells(issues: HoldingAggregationIssue[]) {
+  return issues.filter((issue) => issue.recoverableSameDayOversell).length
+}
+
+function orderBuysBeforeSells(trades: PortfolioTradeRow[]) {
+  return trades
+    .map((trade, index) => ({ index, trade }))
+    .sort((left, right) => {
+      if (left.trade.side !== right.trade.side) {
+        return left.trade.side === "BUY" ? -1 : 1
+      }
+
+      return left.index - right.index
+    })
+    .map(({ trade }) => trade)
+}
+
+function applySameDayHoldingTrades(
+  trades: PortfolioTradeRow[],
+  initialPositions: Map<string, AggregatedHolding>
+) {
+  const originalResult = applyTradesToPositions(trades, initialPositions)
+  const originalOversellCount = countRecoverableSameDayOversells(
+    originalResult.issues
+  )
+
+  if (originalOversellCount === 0) {
+    return originalResult
+  }
+
+  const reorderedResult = applyTradesToPositions(
+    orderBuysBeforeSells(trades),
+    initialPositions
+  )
+  const reorderedOversellCount = countRecoverableSameDayOversells(
+    reorderedResult.issues
+  )
+
+  return reorderedOversellCount < originalOversellCount
+    ? reorderedResult
+    : originalResult
+}
+
+function applySameDateTrades(
+  trades: PortfolioTradeRow[],
+  initialPositions: Map<string, AggregatedHolding>
+) {
+  const entries: Array<
+    | { issue: HoldingAggregationIssue; type: "issue" }
+    | { key: string; type: "group" }
+  > = []
+  const groupedTrades = new Map<string, PortfolioTradeRow[]>()
+
+  for (const trade of trades) {
+    const identity = resolveHoldingIdentity(trade)
+
+    if (isHoldingAggregationIssue(identity)) {
+      entries.push({ issue: identity, type: "issue" })
+      continue
+    }
+
+    const group = groupedTrades.get(identity.key)
+
+    if (group) {
+      group.push(trade)
+      continue
+    }
+
+    groupedTrades.set(identity.key, [trade])
+    entries.push({ key: identity.key, type: "group" })
+  }
+
+  let positions = initialPositions
+  const issues: HoldingAggregationIssue[] = []
+
+  for (const entry of entries) {
+    if (entry.type === "issue") {
+      issues.push(entry.issue)
+      continue
+    }
+
+    const result = applySameDayHoldingTrades(
+      groupedTrades.get(entry.key) ?? [],
+      positions
+    )
+    positions = result.positions
+    issues.push(...result.issues)
+  }
+
+  return { issues, positions }
+}
+
 export function aggregateHoldings(trades: PortfolioTradeRow[]) {
-  const positions = new Map<string, AggregatedHolding>()
+  let positions = new Map<string, AggregatedHolding>()
   const issues: string[] = []
+  const sortedTrades = sortTradesByDate(trades)
 
-  for (const { trade } of sortTradesByDate(trades)) {
-    const resolvedTrade = resolveHoldingTrade(trade, positions)
+  for (let index = 0; index < sortedTrades.length; ) {
+    const date = sortedTrades[index].trade.date
+    const sameDateTrades: PortfolioTradeRow[] = []
 
-    if (typeof resolvedTrade === "string") {
-      issues.push(resolvedTrade)
-      continue
+    while (
+      index < sortedTrades.length &&
+      sortedTrades[index].trade.date === date
+    ) {
+      sameDateTrades.push(sortedTrades[index].trade)
+      index += 1
     }
 
-    const { current, key, ticker } = resolvedTrade
-
-    if (trade.side === "BUY") {
-      positions.set(key, buildBoughtHolding(current, trade))
-      continue
-    }
-
-    const nextHolding = buildSoldHolding(current, trade, ticker)
-
-    if (typeof nextHolding === "string") {
-      issues.push(nextHolding)
-      positions.delete(key)
-      continue
-    }
-
-    if (nextHolding === null) {
-      positions.delete(key)
-      continue
-    }
-
-    positions.set(key, nextHolding)
+    const result = applySameDateTrades(sameDateTrades, positions)
+    positions = result.positions
+    issues.push(...result.issues.map((issue) => issue.message))
   }
 
   const holdings = [...positions.values()].sort(compareAggregatedHoldings)
