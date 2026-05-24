@@ -1,9 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server"
 
-import { deleteTradesRequestSchema } from "@/lib/trades/schema"
+import {
+  deleteTradesRequestSchema,
+  updateTradeRequestSchema,
+} from "@/lib/trades/schema"
 import {
   deleteStoredTradeRows,
   readStoredTradeRows,
+  TradeNotFoundError,
+  updateStoredTradeRow,
 } from "@/lib/trades/storage"
 
 export const dynamic = "force-dynamic"
@@ -52,6 +57,35 @@ export async function DELETE(request: NextRequest) {
       error instanceof Error && error.message
         ? error.message
         : "Unable to delete the requested trades."
+
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const parsed = updateTradeRequestSchema.safeParse(body)
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "A complete trade update is required." },
+        { status: 400 }
+      )
+    }
+
+    const rows = await updateStoredTradeRow(parsed.data.id, parsed.data.row)
+
+    return NextResponse.json({ rows })
+  } catch (error) {
+    if (error instanceof TradeNotFoundError) {
+      return NextResponse.json({ error: error.message }, { status: 404 })
+    }
+
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Unable to update the requested trade."
 
     return NextResponse.json({ error: message }, { status: 500 })
   }

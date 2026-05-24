@@ -4,10 +4,21 @@ import { DatabaseSync } from "node:sqlite"
 import { mkdir, readFile } from "node:fs/promises"
 import path from "node:path"
 
-import { storedTradeRowSchema, type TradeTableRow } from "@/lib/trades/schema"
+import {
+  storedTradeRowSchema,
+  type TradeTableRow,
+  type UpdateTradeRequest,
+} from "@/lib/trades/schema"
 import { z } from "zod"
 
 const storedTradeRowsSchema = z.array(storedTradeRowSchema)
+
+export class TradeNotFoundError extends Error {
+  constructor(message = "The requested trade was not found.") {
+    super(message)
+    this.name = "TradeNotFoundError"
+  }
+}
 
 let writeQueue = Promise.resolve()
 
@@ -292,6 +303,67 @@ export async function deleteStoredTradeRows(
         for (const id of ids) {
           statement.run(id)
         }
+
+        db.exec("COMMIT")
+      } catch (error) {
+        db.exec("ROLLBACK")
+        throw error
+      }
+
+      return readRowsFromDatabase(db)
+    } finally {
+      db.close()
+    }
+  })
+}
+
+export async function updateStoredTradeRow(
+  id: string,
+  row: UpdateTradeRequest["row"],
+  databasePath = getTradeStoreDatabasePath()
+) {
+  return withWriteLock(async () => {
+    const db = await openTradeDatabase(databasePath)
+
+    try {
+      const existing = db
+        .prepare("SELECT id FROM transactions WHERE id = ?")
+        .get(id) as { id: string } | undefined
+
+      if (!existing) {
+        throw new TradeNotFoundError()
+      }
+
+      const statement = db.prepare(`
+        UPDATE transactions
+        SET
+          trade_date = ?,
+          ticker = ?,
+          quantity = ?,
+          price = ?,
+          currency = ?,
+          side = ?,
+          account = ?,
+          total_amount = ?,
+          source_file = ?
+        WHERE id = ?
+      `)
+
+      db.exec("BEGIN")
+
+      try {
+        statement.run(
+          row.date,
+          row.ticker,
+          row.quantity,
+          row.price,
+          row.currency,
+          row.side,
+          row.account,
+          row.totalAmount,
+          row.sourceFile,
+          id
+        )
 
         db.exec("COMMIT")
       } catch (error) {

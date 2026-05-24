@@ -218,11 +218,30 @@ export const deleteTradesRequestSchema = z.object({
   ids: z.array(z.string().min(1)).min(1),
 })
 
+const editableTradeRowSchema = tradeTableRowBaseSchema.extend({
+  date: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Trade date must use YYYY-MM-DD format."),
+  sourceFile: z.string().trim().min(1),
+})
+
+export const updateTradeRequestSchema = z.object({
+  id: z.string().min(1),
+  row: editableTradeRowSchema,
+})
+
 export const deleteTradesResponseSchema = z.object({
+  rows: z.array(tradeTableRowSchema),
+})
+
+export const updateTradeResponseSchema = z.object({
   rows: z.array(tradeTableRowSchema),
 })
 
 export type DeleteTradesRequest = z.infer<typeof deleteTradesRequestSchema>
 export type DeleteTradesResponse = z.infer<typeof deleteTradesResponseSchema>
+export type UpdateTradeRequest = z.infer<typeof updateTradeRequestSchema>
+export type UpdateTradeResponse = z.infer<typeof updateTradeResponseSchema>
 export type ExtractTradesResponse = z.infer<typeof extractTradesResponseSchema>
 export type TradeRowsResponse = z.infer<typeof tradeRowsResponseSchema>

@@ -30,16 +30,14 @@ import {
 } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet"
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
 import {
-  MAX_BATCH_SIZE_LABEL,
   MAX_FILE_SIZE_BYTES,
   MAX_FILE_SIZE_LABEL,
   MAX_FILES,
@@ -49,6 +47,7 @@ import {
   deleteTradesResponseSchema,
   extractTradesResponseSchema,
   tradeRowsResponseSchema,
+  updateTradeResponseSchema,
   type ExtractTradesResponse,
   type TradeTableRow,
 } from "@/lib/trades/schema"
@@ -239,16 +238,15 @@ function ExtractionNoticeStack({
 }
 
 function BrowseFilesButton({
-  size = "sm",
-  label = "Choose files",
+  size = "icon-sm",
 }: {
-  size?: "sm" | "default"
-  label?: string
+  size?: "icon-xs" | "icon-sm" | "icon-lg"
 }) {
   const attachments = usePromptInputAttachments()
 
   return (
     <Button
+      aria-label="Choose files"
       className="border-primary/20 bg-primary/5 text-primary hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
       onClick={() => attachments.openFileDialog()}
       size={size}
@@ -256,7 +254,6 @@ function BrowseFilesButton({
       variant="outline"
     >
       <Paperclip className="size-4" />
-      {label}
     </Button>
   )
 }
@@ -298,14 +295,9 @@ function AttachmentTray() {
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <UploadCloud className="size-4" />
           </span>
-          <div className="flex flex-col">
-            <p className="text-sm font-semibold text-foreground">
-              {hasFiles ? filledLabel : "Drop screenshots or PDFs"}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Drag, paste, or browse below.
-            </p>
-          </div>
+          <p className="text-sm font-semibold text-foreground">
+            {hasFiles ? filledLabel : "Drop screenshots or PDFs"}
+          </p>
         </div>
         <BrowseFilesButton />
       </div>
@@ -313,9 +305,6 @@ function AttachmentTray() {
     </div>
   )
 }
-
-const NOTE_PLACEHOLDER =
-  "Example: ignore account summary totals and use only filled transactions."
 
 function OptionalNote() {
   return (
@@ -332,7 +321,7 @@ function OptionalNote() {
         </div>
         <PromptInputTextarea
           className="[field-sizing:fixed] min-h-16 w-full resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
-          placeholder={NOTE_PLACEHOLDER}
+          placeholder=""
         />
       </div>
     </div>
@@ -399,7 +388,7 @@ export function TradeExtractor() {
   const [issues, setIssues] = useState<string[]>([])
   const [restoreIssue, setRestoreIssue] = useState<string | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
-  const [deleteIssue, setDeleteIssue] = useState<string | null>(null)
+  const [mutationIssue, setMutationIssue] = useState<string | null>(null)
   const [extractionNotices, setExtractionNotices] = useState<
     ExtractionNotice[]
   >([])
@@ -519,7 +508,7 @@ export function TradeExtractor() {
   }, [])
 
   const handleDeleteTrade = useCallback(async (id: string) => {
-    setDeleteIssue(null)
+    setMutationIssue(null)
 
     const response = await fetch("/api/trades/rows", {
       method: "DELETE",
@@ -529,7 +518,7 @@ export function TradeExtractor() {
 
     if (!response.ok) {
       const message = await readErrorMessage(response)
-      setDeleteIssue(message)
+      setMutationIssue(message)
       throw new Error(message)
     }
 
@@ -538,7 +527,35 @@ export function TradeExtractor() {
 
     if (!parsed.success) {
       const message = "The server returned an unexpected response."
-      setDeleteIssue(message)
+      setMutationIssue(message)
+      throw new Error(message)
+    }
+
+    setRows(parsed.data.rows)
+  }, [])
+
+  const handleUpdateTrade = useCallback(async (row: TradeTableRow) => {
+    setMutationIssue(null)
+
+    const { id, ...editableRow } = row
+    const response = await fetch("/api/trades/rows", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, row: editableRow }),
+    })
+
+    if (!response.ok) {
+      const message = await readErrorMessage(response)
+      setMutationIssue(message)
+      throw new Error(message)
+    }
+
+    const payload = await response.json()
+    const parsed = updateTradeResponseSchema.safeParse(payload)
+
+    if (!parsed.success) {
+      const message = "The server returned an unexpected response."
+      setMutationIssue(message)
       throw new Error(message)
     }
 
@@ -671,17 +688,17 @@ export function TradeExtractor() {
 
         <div className="flex w-full flex-wrap items-center justify-end gap-3 lg:w-auto">
           <PromptInputProvider>
-            <Sheet onOpenChange={setIngestOpen} open={ingestOpen}>
-              <SheetTrigger asChild>
+            <Dialog onOpenChange={setIngestOpen} open={ingestOpen}>
+              <DialogTrigger asChild>
                 <Button disabled={extractionRunning}>
                   <Plus data-icon="inline-start" />
                   {extractionRunning
                     ? "Extraction running"
                     : "Add confirmations"}
                 </Button>
-              </SheetTrigger>
-              <SheetContent
-                className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+              </DialogTrigger>
+              <DialogContent
+                className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
                 onInteractOutside={(event) => {
                   if (isExtractionNoticeInteraction(event.target)) {
                     event.preventDefault()
@@ -692,21 +709,23 @@ export function TradeExtractor() {
                     event.preventDefault()
                   }
                 }}
-                side="right"
               >
-                <SheetHeader className="border-b">
-                  <SheetTitle>Add confirmations</SheetTitle>
-                  <SheetDescription>
-                    Select the account, upload screenshots or PDFs, then add the
-                    extracted records to history.
-                  </SheetDescription>
-                </SheetHeader>
+                <DialogHeader>
+                  <DialogTitle>Add confirmations</DialogTitle>
+                </DialogHeader>
 
-                <div className="flex flex-col gap-5 px-4 pb-4">
+                <div className="flex flex-col gap-5">
                   <div className="flex flex-col gap-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Account
-                    </span>
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        Account
+                      </span>
+                      {!selectedAccount ? (
+                        <span className="text-xs text-muted-foreground">
+                          Select an account to enable adding confirmations.
+                        </span>
+                      ) : null}
+                    </div>
                     <ToggleGroup
                       className="flex flex-wrap justify-start"
                       onValueChange={(value) =>
@@ -781,8 +800,7 @@ export function TradeExtractor() {
                     <PromptInputFooter className="border-t px-4 py-3">
                       <PromptInputTools>
                         <span className="text-xs text-muted-foreground">
-                          {MAX_FILES} files max • {MAX_FILE_SIZE_LABEL} each •{" "}
-                          {MAX_BATCH_SIZE_LABEL} total
+                          {MAX_FILES} files max
                         </span>
                       </PromptInputTools>
                       <PromptInputSubmit
@@ -796,14 +814,9 @@ export function TradeExtractor() {
                     </PromptInputFooter>
                   </PromptInput>
 
-                  {!selectedAccount ? (
-                    <p className="text-xs text-muted-foreground">
-                      Select an account to enable adding confirmations.
-                    </p>
-                  ) : null}
                 </div>
-              </SheetContent>
-            </Sheet>
+              </DialogContent>
+            </Dialog>
           </PromptInputProvider>
         </div>
       </section>
@@ -811,9 +824,10 @@ export function TradeExtractor() {
       <PortfolioSnapshot rows={rows} />
 
       <TradesTable
+        historyIssue={mutationIssue ?? restoreIssue}
         issues={issues}
         onDelete={handleDeleteTrade}
-        restoreIssue={deleteIssue ?? restoreIssue}
+        onUpdate={handleUpdateTrade}
         rows={rows}
         successMessage={null}
       />

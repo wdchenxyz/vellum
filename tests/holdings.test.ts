@@ -108,6 +108,93 @@ describe("aggregateHoldings", () => {
     expect(result.holdings).toEqual([])
   })
 
+  it("nets same-day reverse-ordered trades before flagging an oversell", () => {
+    const result = aggregateHoldings([
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-05-22",
+        price: 105.784,
+        quantity: 400,
+        side: "SELL",
+        ticker: "ASTS",
+        totalAmount: 42312.73,
+      }),
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-05-22",
+        price: 106.9917,
+        quantity: 400,
+        ticker: "ASTS",
+        totalAmount: 42796.68,
+      }),
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-05-22",
+        price: 104.8601,
+        quantity: 400,
+        side: "SELL",
+        ticker: "ASTS",
+        totalAmount: 41943.18,
+      }),
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-05-22",
+        price: 104.8464,
+        quantity: 400,
+        ticker: "ASTS",
+        totalAmount: 41938.56,
+      }),
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-05-22",
+        price: 103.4419,
+        quantity: 400,
+        side: "SELL",
+        ticker: "ASTS",
+        totalAmount: 41375.91,
+      }),
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-05-22",
+        price: 105.545,
+        quantity: 300,
+        ticker: "ASTS",
+        totalAmount: 31663.5,
+      }),
+      makeTrade({
+        account: "Firstrade",
+        date: "2026-05-22",
+        price: 105.91,
+        quantity: 100,
+        ticker: "ASTS",
+        totalAmount: 10591,
+      }),
+    ])
+
+    expect(result.issues).toEqual([])
+    expect(result.holdings).toEqual([])
+  })
+
+  it("preserves same-day order when the existing holding can cover the sell", () => {
+    const result = aggregateHoldings([
+      makeTrade({ date: "2026-05-21", price: 100, quantity: 10 }),
+      makeTrade({
+        date: "2026-05-22",
+        price: 105,
+        quantity: 5,
+        side: "SELL",
+      }),
+      makeTrade({ date: "2026-05-22", price: 120, quantity: 5 }),
+    ])
+
+    expect(result.issues).toEqual([])
+    expect(result.holdings[0]).toMatchObject({
+      averageCost: 110,
+      quantityOpen: 10,
+      totalCostOpen: 1100,
+    })
+  })
+
   it("flags oversold positions and excludes them from holdings", () => {
     const result = aggregateHoldings([
       makeTrade({ ticker: "2330", currency: "TWD", quantity: 2 }),
