@@ -20,6 +20,15 @@ export class TradeNotFoundError extends Error {
   }
 }
 
+export class IdempotencyConflictError extends Error {
+  constructor(
+    message = "The request ID has already been used with different trades."
+  ) {
+    super(message)
+    this.name = "IdempotencyConflictError"
+  }
+}
+
 let writeQueue = Promise.resolve()
 
 type StoredTradeRecord = {
@@ -88,10 +97,16 @@ function createTradeSchema(db: DatabaseSync) {
 
     CREATE INDEX IF NOT EXISTS transactions_ticker_idx
       ON transactions (ticker);
+
+    CREATE TABLE IF NOT EXISTS saved_trade_writes (
+      request_id TEXT PRIMARY KEY,
+      payload_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 }
 
-function insertRows(db: DatabaseSync, rows: TradeTableRow[]) {
+function upsertRows(db: DatabaseSync, rows: TradeTableRow[]) {
   if (rows.length === 0) {
     return
   }
@@ -132,24 +147,31 @@ function insertRows(db: DatabaseSync, rows: TradeTableRow[]) {
       source_file = excluded.source_file
   `)
 
+  for (const row of rows) {
+    statement.run(
+      row.id,
+      row.date,
+      row.ticker,
+      row.quantity,
+      row.price,
+      row.currency,
+      row.side,
+      row.account,
+      row.totalAmount,
+      row.sourceFile
+    )
+  }
+}
+
+function insertRows(db: DatabaseSync, rows: TradeTableRow[]) {
+  if (rows.length === 0) {
+    return
+  }
+
   db.exec("BEGIN")
 
   try {
-    for (const row of rows) {
-      statement.run(
-        row.id,
-        row.date,
-        row.ticker,
-        row.quantity,
-        row.price,
-        row.currency,
-        row.side,
-        row.account,
-        row.totalAmount,
-        row.sourceFile
-      )
-    }
-
+    upsertRows(db, rows)
     db.exec("COMMIT")
   } catch (error) {
     db.exec("ROLLBACK")
@@ -201,6 +223,20 @@ function readRowsFromDatabase(db: DatabaseSync) {
     }
 
     return parsed.data
+  })
+}
+
+function readRowsById(db: DatabaseSync, ids: string[]) {
+  const requestedIds = new Set(ids)
+  const rowsById = new Map(
+    readRowsFromDatabase(db)
+      .filter((row) => requestedIds.has(row.id))
+      .map((row) => [row.id, row])
+  )
+
+  return ids.flatMap((id) => {
+    const row = rowsById.get(id)
+    return row ? [row] : []
   })
 }
 
@@ -277,6 +313,67 @@ export async function appendStoredTradeRows(
       insertRows(db, rows)
 
       return readRowsFromDatabase(db)
+    } finally {
+      db.close()
+    }
+  })
+}
+
+export async function appendStoredTradeRowsIdempotently(
+  {
+    payloadHash,
+    requestId,
+    rows,
+  }: {
+    payloadHash: string
+    requestId: string
+    rows: TradeTableRow[]
+  },
+  databasePath = getTradeStoreDatabasePath()
+) {
+  return withWriteLock(async () => {
+    const db = await openTradeDatabase(databasePath)
+    const rowIds = rows.map((row) => row.id)
+
+    try {
+      db.exec("BEGIN IMMEDIATE")
+
+      try {
+        const existing = db
+          .prepare(
+            "SELECT payload_hash FROM saved_trade_writes WHERE request_id = ?"
+          )
+          .get(requestId) as { payload_hash: string } | undefined
+
+        if (existing) {
+          if (existing.payload_hash !== payloadHash) {
+            throw new IdempotencyConflictError()
+          }
+
+          const savedRows = readRowsById(db, rowIds)
+          db.exec("COMMIT")
+
+          return {
+            replayed: true,
+            rows: savedRows,
+          }
+        }
+
+        upsertRows(db, rows)
+        db.prepare(
+          "INSERT INTO saved_trade_writes (request_id, payload_hash) VALUES (?, ?)"
+        ).run(requestId, payloadHash)
+        const savedRows = readRowsById(db, rowIds)
+        db.exec("COMMIT")
+
+        return {
+          replayed: false,
+          rows: savedRows,
+        }
+      } catch (error) {
+        db.exec("ROLLBACK")
+        throw error
+      }
     } finally {
       db.close()
     }

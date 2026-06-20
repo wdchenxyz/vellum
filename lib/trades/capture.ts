@@ -10,14 +10,13 @@ import {
 import { extractTradesFromFile } from "@/lib/trades/extract"
 import { resolveExtractedTradeTicker } from "@/lib/trades/resolve-ticker"
 import {
-  computeTradeTotalAmount,
   extractTradesRequestSchema,
   type ExtractedTrade,
   type ExtractTradesResponse,
   type FileExtractionResult,
   type TradeFileInput,
-  type TradeTableRow,
 } from "@/lib/trades/schema"
+import { buildSavedTradeRows as createSavedTradeRows } from "@/lib/trades/save"
 import { appendStoredTradeRows } from "@/lib/trades/storage"
 
 export type TradeCaptureFailureKind =
@@ -128,7 +127,9 @@ async function extractTradeConfirmations({
 
   for (const file of files) {
     results.push(
-      await resolveTickerForResult(await extractTradesFromFile({ file, prompt }))
+      await resolveTickerForResult(
+        await extractTradesFromFile({ file, prompt })
+      )
     )
   }
 
@@ -162,29 +163,22 @@ function buildSavedTradeRows({
   account: string | null
   results: FileExtractionResult[]
 }) {
-  return results.flatMap((result) =>
-    result.trades.map(
-      (trade): TradeTableRow => ({
+  return createSavedTradeRows({
+    trades: results.flatMap((result) =>
+      result.trades.map((trade) => ({
         account,
         currency: trade.currency,
         date: trade.date,
-        id: crypto.randomUUID(),
+        fee: trade.fee,
         price: trade.price,
         quantity: trade.quantity,
+        settlementAmount: trade.settlementAmount ?? null,
         side: trade.side,
         sourceFile: result.fileName,
         ticker: trade.ticker,
-        totalAmount:
-          trade.settlementAmount ??
-          computeTradeTotalAmount({
-            fee: trade.fee,
-            price: trade.price,
-            quantity: trade.quantity,
-            side: trade.side,
-          }),
-      })
-    )
-  )
+      }))
+    ),
+  })
 }
 
 function getPersistenceErrorMessage(error: unknown) {

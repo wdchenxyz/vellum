@@ -4,6 +4,7 @@ import type { ExtractedTrade, TradeFileInput } from "@/lib/trades/schema"
 
 const mocks = vi.hoisted(() => ({
   appendStoredTradeRows: vi.fn(),
+  appendStoredTradeRowsIdempotently: vi.fn(),
   extractTradesFromFile: vi.fn(),
   resolveExtractedTradeTicker: vi.fn(),
 }))
@@ -18,6 +19,8 @@ vi.mock("@/lib/trades/resolve-ticker", () => ({
 
 vi.mock("@/lib/trades/storage", () => ({
   appendStoredTradeRows: mocks.appendStoredTradeRows,
+  appendStoredTradeRowsIdempotently: mocks.appendStoredTradeRowsIdempotently,
+  getTradeStoreDatabasePath: vi.fn(),
 }))
 
 import { captureTradeConfirmations } from "@/lib/trades/capture"
