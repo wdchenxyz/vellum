@@ -5,7 +5,12 @@ import {
   updateTradeRequestSchema,
 } from "@/lib/trades/schema"
 import {
+  InvalidSavedTradeRequestError,
+  saveReviewedTrades,
+} from "@/lib/trades/save"
+import {
   deleteStoredTradeRows,
+  IdempotencyConflictError,
   readStoredTradeRows,
   TradeNotFoundError,
   updateStoredTradeRow,
@@ -32,6 +37,45 @@ export async function GET() {
       error instanceof Error && error.message
         ? error.message
         : "Unable to load stored transactions."
+
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+export async function POST(request: Request) {
+  let body: unknown
+
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json(
+      { error: "The request body must be valid JSON." },
+      { status: 400 }
+    )
+  }
+
+  try {
+    const result = await saveReviewedTrades(body)
+
+    return NextResponse.json(result, {
+      headers: {
+        "Cache-Control": "no-store",
+      },
+      status: result.replayed ? 200 : 201,
+    })
+  } catch (error) {
+    if (error instanceof InvalidSavedTradeRequestError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+
+    if (error instanceof IdempotencyConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 })
+    }
+
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Unable to save the requested trades."
 
     return NextResponse.json({ error: message }, { status: 500 })
   }

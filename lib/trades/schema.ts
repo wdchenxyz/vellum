@@ -4,7 +4,7 @@ import { MAX_FILES } from "@/lib/trades/constants"
 
 export const tradeSideSchema = z.enum(["BUY", "SELL"])
 
-const tradeAccountSchema = z.string().trim().min(1).nullable()
+export const tradeAccountSchema = z.string().trim().min(1).nullable()
 
 export const tickerCandidateSchema = z.object({
   confidence: z.number().finite().min(0).max(1).nullable().optional(),
@@ -205,6 +205,47 @@ export const tradeRowsResponseSchema = z.object({
   rows: z.array(tradeTableRowSchema),
 })
 
+export const reviewedTradeInputSchema = z
+  .object({
+    account: tradeAccountSchema.optional().default(null),
+    currency: z.string().trim().min(1).nullable(),
+    date: z
+      .string()
+      .trim()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Trade date must use YYYY-MM-DD format."),
+    fee: z.number().finite().nonnegative().nullable().optional().default(null),
+    price: z.number().finite().positive(),
+    quantity: z.number().finite().positive(),
+    settlementAmount: z
+      .number()
+      .finite()
+      .nonnegative()
+      .nullable()
+      .optional()
+      .default(null),
+    side: tradeSideSchema,
+    sourceFile: z.string().trim().min(1).max(255),
+    ticker: z.string().trim().min(1).max(16),
+  })
+  .superRefine((trade, context) => {
+    if (
+      trade.settlementAmount === null &&
+      trade.side === "SELL" &&
+      (trade.fee ?? 0) > trade.price * trade.quantity
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Fee cannot exceed the gross sell amount.",
+        path: ["fee"],
+      })
+    }
+  })
+
+export const saveReviewedTradesRequestSchema = z.object({
+  requestId: z.string().trim().min(1).max(128),
+  trades: z.array(reviewedTradeInputSchema).min(1).max(500),
+})
+
 export type ExtractedTrade = z.infer<typeof extractedTradeSchema>
 export type ExtractedTradesEnvelope = z.infer<
   typeof extractedTradesEnvelopeSchema
@@ -214,6 +255,10 @@ export type TradeFileInput = z.infer<typeof tradeFileSchema>
 export type ExtractTradesRequest = z.infer<typeof extractTradesRequestSchema>
 export type FileExtractionResult = z.infer<typeof fileExtractionResultSchema>
 export type TradeTableRow = z.infer<typeof tradeTableRowSchema>
+export type ReviewedTradeInput = z.infer<typeof reviewedTradeInputSchema>
+export type SaveReviewedTradesRequest = z.infer<
+  typeof saveReviewedTradesRequestSchema
+>
 export const deleteTradesRequestSchema = z.object({
   ids: z.array(z.string().min(1)).min(1),
 })
