@@ -125,7 +125,7 @@ describe("fetchFxHistory", () => {
       })
     )
 
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
       Response.json({
         values: [
           { close: "32.15", datetime: "2026-03-12" },

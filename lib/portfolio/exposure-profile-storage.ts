@@ -3,6 +3,7 @@ import "server-only"
 import { DatabaseSync } from "node:sqlite"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
+import type { Sql, TransactionSql } from "postgres"
 
 import {
   DEFAULT_EXPOSURE_PROFILES,
@@ -11,6 +12,12 @@ import {
   type InstrumentExposureProfile,
   type UpsertInstrumentExposureProfile,
 } from "@/lib/portfolio/exposure-profiles"
+import {
+  ensurePostgresSchema,
+  getLocalSqlitePath,
+  getPostgresSql,
+  shouldUsePostgresStorage,
+} from "@/lib/storage/postgres"
 import { getTradeStoreDatabasePath } from "@/lib/trades/storage"
 
 type StoredExposureProfileRecord = {
@@ -26,6 +33,8 @@ type StoredExposureProfileRecord = {
   underlying_ticker: string
   updated_at: string
 }
+
+type QuerySql = Sql | TransactionSql
 
 let exposureWriteQueue = Promise.resolve()
 
@@ -134,6 +143,49 @@ function upsertProfile(
   )
 }
 
+async function upsertProfilePostgres(
+  sql: QuerySql,
+  profile: UpsertInstrumentExposureProfile
+) {
+  const normalized = normalizeExposureProfile(profile)
+
+  await sql`
+    INSERT INTO instrument_exposure_profiles (
+      market,
+      ticker,
+      instrument_name,
+      underlying_market,
+      underlying_ticker,
+      exposure_multiplier,
+      exposure_direction,
+      source,
+      review_status,
+      notes
+    ) VALUES (
+      ${normalized.market},
+      ${normalized.ticker},
+      ${normalized.instrumentName},
+      ${normalized.underlyingMarket},
+      ${normalized.underlyingTicker},
+      ${normalized.exposureMultiplier},
+      ${normalized.exposureDirection},
+      ${normalized.source},
+      'reviewed',
+      ${normalized.notes}
+    )
+    ON CONFLICT(market, ticker) DO UPDATE SET
+      instrument_name = excluded.instrument_name,
+      underlying_market = excluded.underlying_market,
+      underlying_ticker = excluded.underlying_ticker,
+      exposure_multiplier = excluded.exposure_multiplier,
+      exposure_direction = excluded.exposure_direction,
+      source = excluded.source,
+      review_status = excluded.review_status,
+      notes = excluded.notes,
+      updated_at = now()
+  `
+}
+
 function seedDefaultProfiles(db: DatabaseSync) {
   const statement = db.prepare(`
     INSERT INTO instrument_exposure_profiles (
@@ -186,6 +238,39 @@ function seedDefaultProfiles(db: DatabaseSync) {
   } catch (error) {
     db.exec("ROLLBACK")
     throw error
+  }
+}
+
+async function seedDefaultProfilesPostgres(sql: Sql) {
+  for (const profile of DEFAULT_EXPOSURE_PROFILES) {
+    const normalized = normalizeExposureProfile(profile)
+
+    await sql`
+      INSERT INTO instrument_exposure_profiles (
+        market,
+        ticker,
+        instrument_name,
+        underlying_market,
+        underlying_ticker,
+        exposure_multiplier,
+        exposure_direction,
+        source,
+        review_status,
+        notes
+      ) VALUES (
+        ${normalized.market},
+        ${normalized.ticker},
+        ${normalized.instrumentName},
+        ${normalized.underlyingMarket},
+        ${normalized.underlyingTicker},
+        ${normalized.exposureMultiplier},
+        ${normalized.exposureDirection},
+        ${normalized.source},
+        'reviewed',
+        ${normalized.notes}
+      )
+      ON CONFLICT(market, ticker) DO NOTHING
+    `
   }
 }
 
@@ -249,6 +334,62 @@ function readProfilesFromDatabase(db: DatabaseSync) {
   return rows.map(mapStoredExposureProfile)
 }
 
+async function readProfileFromPostgres(
+  sql: QuerySql,
+  profile: UpsertInstrumentExposureProfile
+) {
+  const normalized = normalizeExposureProfile(profile)
+  const rows = (await sql`
+    SELECT
+      created_at::text AS created_at,
+      exposure_direction,
+      exposure_multiplier,
+      instrument_name,
+      market,
+      notes,
+      source,
+      ticker,
+      underlying_market,
+      underlying_ticker,
+      updated_at::text AS updated_at
+    FROM instrument_exposure_profiles
+    WHERE market = ${normalized.market}
+      AND ticker = ${normalized.ticker}
+  `) as StoredExposureProfileRecord[]
+
+  if (!rows[0]) {
+    throw new Error("Unable to load the saved exposure profile.")
+  }
+
+  return mapStoredExposureProfile(rows[0])
+}
+
+async function readProfilesFromPostgres(sql: QuerySql) {
+  const rows = (await sql`
+    SELECT
+      created_at::text AS created_at,
+      exposure_direction,
+      exposure_multiplier,
+      instrument_name,
+      market,
+      notes,
+      source,
+      ticker,
+      underlying_market,
+      underlying_ticker,
+      updated_at::text AS updated_at
+    FROM instrument_exposure_profiles
+    ORDER BY market ASC, ticker ASC
+  `) as StoredExposureProfileRecord[]
+
+  return rows.map(mapStoredExposureProfile)
+}
+
+async function ensurePostgresExposureProfileStore(sql: Sql) {
+  await ensurePostgresSchema(sql)
+  await seedDefaultProfilesPostgres(sql)
+}
+
 async function openExposureProfileDatabase(databasePath: string) {
   await mkdir(path.dirname(databasePath), { recursive: true })
 
@@ -269,10 +410,19 @@ async function withExposureWriteLock<T>(work: () => Promise<T>) {
   return currentWrite
 }
 
-export async function readInstrumentExposureProfiles(
-  databasePath = getTradeStoreDatabasePath()
-) {
-  const db = await openExposureProfileDatabase(databasePath)
+export async function readInstrumentExposureProfiles(databasePath?: string) {
+  if (shouldUsePostgresStorage(databasePath)) {
+    const sql = getPostgresSql()
+    await ensurePostgresExposureProfileStore(sql)
+
+    return readProfilesFromPostgres(sql)
+  }
+
+  const sqlitePath = getLocalSqlitePath(
+    databasePath,
+    getTradeStoreDatabasePath()
+  )
+  const db = await openExposureProfileDatabase(sqlitePath)
 
   try {
     return readProfilesFromDatabase(db)
@@ -283,10 +433,25 @@ export async function readInstrumentExposureProfiles(
 
 export async function upsertInstrumentExposureProfile(
   profile: UpsertInstrumentExposureProfile,
-  databasePath = getTradeStoreDatabasePath()
+  databasePath?: string
 ) {
+  if (shouldUsePostgresStorage(databasePath)) {
+    const sql = getPostgresSql()
+    await ensurePostgresExposureProfileStore(sql)
+
+    return sql.begin(async (transaction) => {
+      await upsertProfilePostgres(transaction, profile)
+
+      return readProfileFromPostgres(transaction, profile)
+    })
+  }
+
   return withExposureWriteLock(async () => {
-    const db = await openExposureProfileDatabase(databasePath)
+    const sqlitePath = getLocalSqlitePath(
+      databasePath,
+      getTradeStoreDatabasePath()
+    )
+    const db = await openExposureProfileDatabase(sqlitePath)
 
     try {
       upsertProfile(db, profile)
