@@ -8,6 +8,7 @@
 - `components/holdings-table.tsx` and `components/portfolio-weight-chart.tsx` provide secondary portfolio analysis.
 - Stored trade rows may include optional `account` metadata; holdings aggregation uses it to keep same-ticker positions separated by account.
 - Reviewed trades can be saved in one atomic batch with `POST /api/trades/rows`. The request requires a stable `requestId` plus one or more trades; retrying the same request is idempotent, while reusing the ID with different trades returns a conflict.
+- Final holdings can be read with `GET /api/portfolio/holdings`; the route shares aggregation, Previous Close, FX, filtering, and valuation logic with the Portfolio Assistant.
 - Quote lookups are cached on disk in `data/quote-cache.json` so refreshing the page reuses recent previous-close and FX snapshots instead of repeatedly calling upstream APIs.
 - The weight chart is view-driven: it can show all holdings merged across accounts, a single account sleeve, or a market slice, while the detailed tables remain account-grouped.
 
@@ -40,3 +41,7 @@
 ```
 
 `fee` and `settlementAmount` are optional. When `settlementAmount` is absent, Vellum calculates the Saved Trade total from price, quantity, side, and fee. A new batch returns `201`; an idempotent replay returns `200`; conflicting reuse of `requestId` returns `409`.
+
+## Reading Current Holdings
+
+`GET /api/portfolio/holdings` returns final open holdings grouped by brokerage account, including quantity, average cost, Previous Close, market value, Weight, and Unrealized P&L. Optional query parameters are `account`, `ticker`, and `forceRefresh=true|false`.

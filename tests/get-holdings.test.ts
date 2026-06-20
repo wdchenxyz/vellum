@@ -22,9 +22,9 @@ vi.mock("@/lib/trades/storage", () => ({
   readStoredTradeRows: mocks.readStoredTradeRows,
 }))
 
-import { getHoldings } from "@/lib/tools/get-holdings"
+import { getCurrentHoldings } from "@/lib/portfolio/current-holdings"
 
-describe("getHoldings", () => {
+describe("getCurrentHoldings", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.fetchUsdTwdFxSnapshot.mockResolvedValue({
@@ -37,13 +37,14 @@ describe("getHoldings", () => {
   it("returns an empty response when there are no stored trades", async () => {
     mocks.readStoredTradeRows.mockResolvedValue([])
 
-    const result = await getHoldings.execute?.({})
+    const result = await getCurrentHoldings()
 
     expect(mocks.aggregateHoldings).not.toHaveBeenCalled()
     expect(mocks.fetchPreviousCloseSnapshots).not.toHaveBeenCalled()
     expect(result).toEqual({
       groups: [],
       totalHoldings: 0,
+      issues: [],
     })
   })
 
@@ -54,7 +55,7 @@ describe("getHoldings", () => {
       issues: ["No open positions."],
     })
 
-    const result = await getHoldings.execute?.({})
+    const result = await getCurrentHoldings()
 
     expect(mocks.fetchPreviousCloseSnapshots).not.toHaveBeenCalled()
     expect(mocks.applyPreviousCloseQuotes).not.toHaveBeenCalled()
@@ -139,15 +140,24 @@ describe("getHoldings", () => {
       ],
     })
 
-    const result = await getHoldings.execute?.({
+    const result = await getCurrentHoldings({
       account: " taxable ",
+      forceRefresh: true,
       ticker: " aa ",
     })
 
-    expect(mocks.fetchPreviousCloseSnapshots).toHaveBeenCalledWith([
-      { ticker: "AAPL", market: "US" },
-      { ticker: "TSM", market: "US" },
-    ])
+    expect(mocks.fetchPreviousCloseSnapshots).toHaveBeenCalledWith(
+      [
+        { ticker: "AAPL", market: "US" },
+        { ticker: "TSM", market: "US" },
+      ],
+      expect.any(Function),
+      { forceRefresh: true }
+    )
+    expect(mocks.fetchUsdTwdFxSnapshot).toHaveBeenCalledWith(
+      expect.any(Function),
+      { forceRefresh: true }
+    )
     expect(mocks.applyPreviousCloseQuotes).toHaveBeenCalledWith(holdings, {
       "US:AAPL": { key: "US:AAPL", price: 160 },
       "US:TSM": { key: "US:TSM", price: 200 },
@@ -226,7 +236,7 @@ describe("getHoldings", () => {
       ],
     })
 
-    const result = await getHoldings.execute?.({
+    const result = await getCurrentHoldings({
       ticker: "TSM",
     })
 
@@ -290,7 +300,7 @@ describe("getHoldings", () => {
       ],
     })
 
-    const result = await getHoldings.execute?.({})
+    const result = await getCurrentHoldings()
 
     expect(result).toEqual({
       groups: [
@@ -396,7 +406,7 @@ describe("getHoldings", () => {
       ],
     })
 
-    const result = await getHoldings.execute?.({})
+    const result = await getCurrentHoldings()
 
     expect(result).toEqual({
       groups: [
