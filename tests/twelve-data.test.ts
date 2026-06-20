@@ -202,25 +202,24 @@ describe("fetchPreviousCloseSnapshots", () => {
         })
       }
 
-      if (url.includes("/eod?") && url.includes("symbol=AAPL")) {
+      if (url.includes("/eod?")) {
         return Response.json({
-          close: "150.25",
-          currency: "USD",
-          datetime: "2026-03-17",
-          exchange: "NASDAQ",
-          mic_code: "XNAS",
-          symbol: "AAPL",
-        })
-      }
-
-      if (url.includes("/eod?") && url.includes("symbol=MUU")) {
-        return Response.json({
-          close: "213.88",
-          currency: "USD",
-          datetime: "2026-03-16",
-          exchange: "NASDAQ",
-          mic_code: "XNMS",
-          symbol: "MUU",
+          AAPL: {
+            close: "150.25",
+            currency: "USD",
+            datetime: "2026-03-17",
+            exchange: "NASDAQ",
+            mic_code: "XNAS",
+            symbol: "AAPL",
+          },
+          MUU: {
+            close: "213.88",
+            currency: "USD",
+            datetime: "2026-03-16",
+            exchange: "NASDAQ",
+            mic_code: "XNMS",
+            symbol: "MUU",
+          },
         })
       }
 
@@ -447,7 +446,7 @@ describe("fetchPreviousCloseSnapshots", () => {
     )
 
     expect(first).toEqual(second)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it("bypasses cached previous close quotes when force refresh is requested", async () => {
@@ -599,7 +598,73 @@ describe("fetchPreviousCloseSnapshots", () => {
     })
   })
 
-  it("batches forced US previous close refreshes by MIC code", async () => {
+  it("batches uncached US previous close loads without symbol search", async () => {
+    let eodCalls = 0
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = input.toString()
+
+      if (url.includes("/symbol_search?")) {
+        throw new Error(
+          "Previous close loads should not resolve US symbols first."
+        )
+      }
+
+      if (url.includes("/eod?")) {
+        eodCalls += 1
+
+        return Response.json({
+          AAPL: {
+            close: "151.75",
+            currency: "USD",
+            datetime: "2026-03-18",
+            exchange: "NASDAQ",
+            mic_code: "XNAS",
+            symbol: "AAPL",
+          },
+          MSFT: {
+            close: "401.50",
+            currency: "USD",
+            datetime: "2026-03-18",
+            exchange: "NASDAQ",
+            mic_code: "XNAS",
+            symbol: "MSFT",
+          },
+        })
+      }
+
+      throw new Error(`Unexpected URL ${url}`)
+    })
+
+    const quotes = await fetchPreviousCloseSnapshots(
+      [
+        { market: "US", ticker: "AAPL" },
+        { market: "US", ticker: "MSFT" },
+      ],
+      fetchMock as typeof fetch,
+      { returnCachedImmediately: true }
+    )
+
+    expect(quotes).toEqual([
+      expect.objectContaining({
+        asOf: "2026-03-18",
+        previousClose: 151.75,
+        ticker: "AAPL",
+      }),
+      expect.objectContaining({
+        asOf: "2026-03-18",
+        previousClose: 401.5,
+        ticker: "MSFT",
+      }),
+    ])
+    expect(eodCalls).toBe(1)
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        input.toString().includes("/symbol_search?")
+      )
+    ).toBe(false)
+  })
+
+  it("batches forced US previous close refreshes without symbol search", async () => {
     let eodCalls = 0
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = input.toString()
@@ -682,6 +747,11 @@ describe("fetchPreviousCloseSnapshots", () => {
       }),
     ])
     expect(eodCalls).toBe(1)
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        input.toString().includes("/symbol_search?")
+      )
+    ).toBe(false)
   })
 })
 
