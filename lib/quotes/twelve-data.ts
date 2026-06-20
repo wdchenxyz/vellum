@@ -5,10 +5,8 @@ import {
   type CachedInstrument,
   type FxSnapshotCacheResult,
   getCachedFxSnapshot,
-  getCachedInstrumentResolution,
   getCachedPreviousCloseQuotes,
   setCachedFxSnapshot,
-  setCachedInstrumentResolution,
   setCachedPreviousCloseQuotes,
 } from "@/lib/quotes/cache"
 import { fetchTaiwanPreviousClose } from "@/lib/quotes/taiwan-prices"
@@ -32,23 +30,6 @@ const twelveDataErrorSchema = z.object({
   message: z.string(),
 })
 
-const twelveDataStocksResponseSchema = z.object({
-  data: z
-    .array(
-      z.object({
-        symbol: z.string(),
-        instrument_name: z.string().optional(),
-        instrument_type: z.string().optional(),
-        exchange: z.string(),
-        mic_code: z.string(),
-        currency: z.string().optional(),
-        country: z.string().optional(),
-      })
-    )
-    .default([]),
-  status: z.string().optional(),
-})
-
 const twelveDataEodResponseSchema = z.object({
   symbol: z.string(),
   exchange: z.string().nullable().optional(),
@@ -59,12 +40,14 @@ const twelveDataEodResponseSchema = z.object({
 })
 const twelveDataBatchEodResponseSchema = z.record(z.string(), z.unknown())
 
-export type TwelveDataStockLookupItem = z.infer<
-  typeof twelveDataStocksResponseSchema
->["data"][number]
-
-function getCountryName(market: SupportedMarket) {
-  return market === "TW" ? "Taiwan" : "United States"
+export type TwelveDataStockLookupItem = {
+  country?: string
+  currency?: string
+  exchange: string
+  instrument_name?: string
+  instrument_type?: string
+  mic_code: string
+  symbol: string
 }
 
 function countryMatchesMarket(
@@ -256,6 +239,19 @@ function buildPreviousCloseErrorQuote(
   }
 }
 
+function buildDirectUsInstrument(
+  target: PreviousCloseLookupTarget
+): CachedInstrument {
+  return {
+    country: "United States",
+    currency: "USD",
+    exchange: "",
+    instrument_type: "Common Stock",
+    mic_code: "",
+    symbol: target.ticker.trim().toUpperCase(),
+  }
+}
+
 async function resolveInstrument(
   target: PreviousCloseLookupTarget,
   fetcher: typeof fetch
@@ -283,48 +279,7 @@ async function resolveInstrument(
     }
   }
 
-  // Check instrument resolution cache first
-  const cacheKey = getHoldingKey({
-    market: target.market,
-    ticker: target.ticker,
-  })
-  const cached = await getCachedInstrumentResolution(cacheKey)
-
-  if (cached) {
-    return cached
-  }
-
-  const lookupSymbol = target.ticker.trim().toUpperCase()
-
-  const payload = await fetchTwelveDataJson(
-    "/symbol_search",
-    {
-      symbol: lookupSymbol,
-    },
-    fetcher
-  )
-  const parsed = twelveDataStocksResponseSchema.safeParse(payload)
-
-  if (!parsed.success) {
-    throw new Error("Twelve Data returned an invalid instrument response.")
-  }
-
-  const instrument = selectInstrumentMatch(
-    parsed.data.data,
-    target,
-    lookupSymbol
-  )
-
-  if (!instrument) {
-    throw new Error(
-      `No supported ${getCountryName(target.market)} listing was found for ${target.ticker}.`
-    )
-  }
-
-  // Cache the resolution for future use
-  await setCachedInstrumentResolution(cacheKey, instrument)
-
-  return instrument
+  return buildDirectUsInstrument(target)
 }
 
 async function fetchPreviousClose(
@@ -363,7 +318,7 @@ async function fetchPreviousCloseForInstrument(
   const payload = await fetchTwelveDataJson(
     "/eod",
     {
-      mic_code: instrument.mic_code,
+      mic_code: instrument.mic_code || undefined,
       symbol: instrument.symbol,
     },
     fetcher,
@@ -443,7 +398,7 @@ async function fetchUsPreviousCloseBatchGroup(
   const payload = await fetchTwelveDataJson(
     "/eod",
     {
-      mic_code: group[0]?.instrument.mic_code,
+      mic_code: group[0]?.instrument.mic_code || undefined,
       symbol: group.map(({ instrument }) => instrument.symbol).join(","),
     },
     fetcher,
@@ -477,9 +432,10 @@ async function fetchUsPreviousCloseBatch(
   const groupsByMic = new Map<string, ResolvedUsPreviousCloseTarget[]>()
 
   for (const target of targets) {
-    const group = groupsByMic.get(target.instrument.mic_code) ?? []
+    const micCode = target.instrument.mic_code || "__default__"
+    const group = groupsByMic.get(micCode) ?? []
     group.push(target)
-    groupsByMic.set(target.instrument.mic_code, group)
+    groupsByMic.set(micCode, group)
   }
 
   const quotes: PreviousCloseQuote[] = []
@@ -534,15 +490,7 @@ async function fetchMissingPreviousCloseQuotes(
   targets: PreviousCloseLookupTarget[],
   fetcher: typeof fetch
 ) {
-  return Promise.all(
-    targets.map(async (target) => {
-      try {
-        return await fetchPreviousClose(target, fetcher)
-      } catch (error) {
-        return buildPreviousCloseErrorQuote(target, error)
-      }
-    })
-  )
+  return fetchForcedPreviousCloseQuotes(targets, fetcher)
 }
 
 function buildPreviousCloseLookup(
