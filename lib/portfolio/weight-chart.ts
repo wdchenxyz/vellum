@@ -48,7 +48,9 @@ function getBaseCurrency(activeBuckets: PortfolioWeightBucket[]) {
   return "TWD"
 }
 
-function normalizeActiveBuckets(activeBuckets: PortfolioWeightBucket[]) {
+function normalizeActiveBuckets(
+  activeBuckets: PortfolioWeightBucket[]
+): PortfolioWeightBucket[] {
   return activeBuckets.length > 0 ? activeBuckets : ["TWD", "USD"]
 }
 

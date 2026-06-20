@@ -23,7 +23,18 @@ pnpm install
 pnpm dev
 ```
 
-The app runs at `http://localhost:3000`. Trade data is stored locally in `data/transactions.sqlite`; the SQLite database and schema are created automatically on first read or write. Legacy `data/transactions.json` data is migrated when the SQLite store is empty.
+The app runs at `http://localhost:3000`. Local development stores trade data in `data/transactions.sqlite`; the SQLite database and schema are created automatically on first read or write. Legacy `data/transactions.json` data is migrated when the SQLite store is empty.
+
+## Hosted Storage
+
+On Vercel, set `DATABASE_URL` by connecting a Neon Postgres database to the project. When `DATABASE_URL` is present, Vellum uses Postgres for transactions and exposure profiles. Without `DATABASE_URL`, local development falls back to SQLite.
+
+Portfolio Assistant can be disabled for hosted deployments with:
+
+```bash
+NEXT_PUBLIC_PORTFOLIO_ASSISTANT_ENABLED=false
+PORTFOLIO_ASSISTANT_ENABLED=false
+```
 
 ## Scripts
 

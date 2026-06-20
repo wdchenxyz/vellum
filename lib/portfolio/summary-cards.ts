@@ -152,7 +152,7 @@ export function getTotalSummaryStatus(
     return "fx-pending"
   }
 
-  return fxStatus
+  return fxStatus === "pending" ? "fx-pending" : fxStatus
 }
 
 export function getAccountSummaryStatus(
@@ -222,7 +222,8 @@ export function buildAccountSummaries(
       if (!singleCurrency) {
         return {
           account,
-          cost: twdTotals.needsFxCount === 0 ? twdTotals.convertibleCostTwd : null,
+          cost:
+            twdTotals.needsFxCount === 0 ? twdTotals.convertibleCostTwd : null,
           currencies,
           displayCurrency: "TWD",
           holdingCount: twdTotals.holdingCount,

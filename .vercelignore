@@ -1,0 +1,11 @@
+awesome-finance-skills
+.env
+.env*.local
+.next
+node_modules
+data/transactions.json
+data/transactions.sqlite
+data/transactions.sqlite-*
+data/quote-cache.json
+data/history-cache.json
+tsconfig.tsbuildinfo

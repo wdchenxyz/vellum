@@ -44,10 +44,13 @@ describe("getDailyValues", () => {
   })
 
   it("filters the returned series and computes summary metrics from the filtered range", async () => {
-    const result = await getDailyValues.execute?.({
-      dateFrom: "2026-03-02",
-      dateTo: "2026-03-03",
-    })
+    const result = await getDailyValues.execute?.(
+      {
+        dateFrom: "2026-03-02",
+        dateTo: "2026-03-03",
+      },
+      undefined as never
+    )
 
     expect(mocks.readStoredTradeRows).toHaveBeenCalledTimes(1)
     expect(mocks.computeDailyValuesFromTrades).toHaveBeenCalledWith([
@@ -95,10 +98,13 @@ describe("getDailyValues", () => {
   })
 
   it("returns null summaries when the filtered range has no portfolio points", async () => {
-    const result = await getDailyValues.execute?.({
-      dateFrom: "2026-04-01",
-      dateTo: "2026-04-02",
-    })
+    const result = await getDailyValues.execute?.(
+      {
+        dateFrom: "2026-04-01",
+        dateTo: "2026-04-02",
+      },
+      undefined as never
+    )
 
     expect(result).toEqual({
       benchmarks: {

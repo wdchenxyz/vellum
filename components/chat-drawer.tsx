@@ -32,6 +32,9 @@ import {
   type ReactNode,
 } from "react"
 
+const portfolioAssistantEnabled =
+  process.env.NEXT_PUBLIC_PORTFOLIO_ASSISTANT_ENABLED !== "false"
+
 const ChatDrawerContext = createContext<{
   open: boolean
   setOpen: (open: boolean) => void
@@ -52,7 +55,7 @@ function useChatState() {
   return ctx
 }
 
-function ChatStateProvider({ children }: { children: ReactNode }) {
+function EnabledChatStateProvider({ children }: { children: ReactNode }) {
   const chat = useChat({})
   return (
     <ChatStateContext.Provider value={chat}>
@@ -61,8 +64,20 @@ function ChatStateProvider({ children }: { children: ReactNode }) {
   )
 }
 
+function ChatStateProvider({ children }: { children: ReactNode }) {
+  return portfolioAssistantEnabled ? (
+    <EnabledChatStateProvider>{children}</EnabledChatStateProvider>
+  ) : (
+    <>{children}</>
+  )
+}
+
 export function ChatTrigger() {
   const { open, setOpen } = useChatDrawer()
+
+  if (!portfolioAssistantEnabled) {
+    return null
+  }
 
   return (
     <Button
@@ -278,6 +293,10 @@ export function ChatLayout({ children }: { children: ReactNode }) {
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
+    if (!portfolioAssistantEnabled) {
+      return
+    }
+
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "j" && e.metaKey && !e.shiftKey) {
         e.preventDefault()
@@ -303,7 +322,7 @@ export function ChatLayout({ children }: { children: ReactNode }) {
           {/* Spacer to push content when sidebar is open */}
           {open && !expanded && <div className="w-[480px] shrink-0" />}
         </div>
-        {open && <ChatPanel />}
+        {open && portfolioAssistantEnabled && <ChatPanel />}
       </ChatStateProvider>
     </ChatDrawerContext.Provider>
   )

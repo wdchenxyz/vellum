@@ -54,7 +54,7 @@ describe("getTradeHistory", () => {
       }),
     ])
 
-    const result = await getTradeHistory.execute?.({})
+    const result = await getTradeHistory.execute?.({}, undefined as never)
 
     expect(result).toEqual({
       count: 2,
@@ -115,13 +115,16 @@ describe("getTradeHistory", () => {
       }),
     ])
 
-    const result = await getTradeHistory.execute?.({
-      ticker: " aa ",
-      account: " taxable ",
-      dateFrom: "2026-03-16",
-      dateTo: "2026-03-17",
-      side: "BUY",
-    })
+    const result = await getTradeHistory.execute?.(
+      {
+        ticker: " aa ",
+        account: " taxable ",
+        dateFrom: "2026-03-16",
+        dateTo: "2026-03-17",
+        side: "BUY",
+      },
+      undefined as never
+    )
 
     expect(result).toEqual({
       count: 1,
@@ -150,10 +153,13 @@ describe("getTradeHistory", () => {
       }),
     ])
 
-    const result = await getTradeHistory.execute?.({
-      ticker: "nvda",
-      side: "BUY",
-    })
+    const result = await getTradeHistory.execute?.(
+      {
+        ticker: "nvda",
+        side: "BUY",
+      },
+      undefined as never
+    )
 
     expect(result).toEqual({
       count: 0,

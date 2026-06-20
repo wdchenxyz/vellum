@@ -3,7 +3,14 @@ import "server-only"
 import { DatabaseSync } from "node:sqlite"
 import { mkdir, readFile } from "node:fs/promises"
 import path from "node:path"
+import type { Sql, TransactionSql } from "postgres"
 
+import {
+  ensurePostgresSchema,
+  getLocalSqlitePath,
+  getPostgresSql,
+  shouldUsePostgresStorage,
+} from "@/lib/storage/postgres"
 import {
   storedTradeRowSchema,
   type TradeTableRow,
@@ -43,6 +50,8 @@ type StoredTradeRecord = {
   ticker: string
   total_amount: number
 }
+
+type QuerySql = Sql | TransactionSql
 
 export function getTradeStoreDatabasePath(rootDir = process.cwd()) {
   return path.join(rootDir, "data", "transactions.sqlite")
@@ -179,6 +188,56 @@ function insertRows(db: DatabaseSync, rows: TradeTableRow[]) {
   }
 }
 
+async function upsertRowsPostgres(sql: QuerySql, rows: TradeTableRow[]) {
+  for (const row of rows) {
+    await sql`
+      INSERT INTO transactions (
+        id,
+        trade_date,
+        ticker,
+        quantity,
+        price,
+        currency,
+        side,
+        account,
+        total_amount,
+        source_file
+      ) VALUES (
+        ${row.id},
+        ${row.date},
+        ${row.ticker},
+        ${row.quantity},
+        ${row.price},
+        ${row.currency},
+        ${row.side},
+        ${row.account},
+        ${row.totalAmount},
+        ${row.sourceFile}
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        trade_date = excluded.trade_date,
+        ticker = excluded.ticker,
+        quantity = excluded.quantity,
+        price = excluded.price,
+        currency = excluded.currency,
+        side = excluded.side,
+        account = excluded.account,
+        total_amount = excluded.total_amount,
+        source_file = excluded.source_file
+    `
+  }
+}
+
+async function insertRowsPostgres(sql: Sql, rows: TradeTableRow[]) {
+  if (rows.length === 0) {
+    return
+  }
+
+  await sql.begin(async (transaction) => {
+    await upsertRowsPostgres(transaction, rows)
+  })
+}
+
 function mapStoredRecord(record: StoredTradeRecord): TradeTableRow {
   return {
     account: record.account,
@@ -226,10 +285,52 @@ function readRowsFromDatabase(db: DatabaseSync) {
   })
 }
 
+async function readRowsFromPostgres(sql: QuerySql) {
+  const rows = (await sql`
+    SELECT
+      account,
+      currency,
+      trade_date AS date,
+      id,
+      price,
+      quantity,
+      side,
+      source_file,
+      ticker,
+      total_amount
+    FROM transactions
+    ORDER BY sequence ASC
+  `) as StoredTradeRecord[]
+
+  return rows.map((row) => {
+    const parsed = storedTradeRowSchema.safeParse(mapStoredRecord(row))
+
+    if (!parsed.success) {
+      throw new Error("The stored transactions database is invalid.")
+    }
+
+    return parsed.data
+  })
+}
+
 function readRowsById(db: DatabaseSync, ids: string[]) {
   const requestedIds = new Set(ids)
   const rowsById = new Map(
     readRowsFromDatabase(db)
+      .filter((row) => requestedIds.has(row.id))
+      .map((row) => [row.id, row])
+  )
+
+  return ids.flatMap((id) => {
+    const row = rowsById.get(id)
+    return row ? [row] : []
+  })
+}
+
+async function readRowsByIdPostgres(sql: QuerySql, ids: string[]) {
+  const requestedIds = new Set(ids)
+  const rowsById = new Map(
+    (await readRowsFromPostgres(sql))
       .filter((row) => requestedIds.has(row.id))
       .map((row) => [row.id, row])
   )
@@ -286,10 +387,19 @@ async function withWriteLock<T>(work: () => Promise<T>) {
   return currentWrite
 }
 
-export async function readStoredTradeRows(
-  databasePath = getTradeStoreDatabasePath()
-) {
-  const db = await openTradeDatabase(databasePath)
+export async function readStoredTradeRows(databasePath?: string) {
+  if (shouldUsePostgresStorage(databasePath)) {
+    const sql = getPostgresSql()
+    await ensurePostgresSchema(sql)
+
+    return readRowsFromPostgres(sql)
+  }
+
+  const sqlitePath = getLocalSqlitePath(
+    databasePath,
+    getTradeStoreDatabasePath()
+  )
+  const db = await openTradeDatabase(sqlitePath)
 
   try {
     return readRowsFromDatabase(db)
@@ -300,14 +410,26 @@ export async function readStoredTradeRows(
 
 export async function appendStoredTradeRows(
   rows: TradeTableRow[],
-  databasePath = getTradeStoreDatabasePath()
+  databasePath?: string
 ) {
   if (rows.length === 0) {
     return readStoredTradeRows(databasePath)
   }
 
+  if (shouldUsePostgresStorage(databasePath)) {
+    const sql = getPostgresSql()
+    await ensurePostgresSchema(sql)
+    await insertRowsPostgres(sql, rows)
+
+    return readRowsFromPostgres(sql)
+  }
+
   return withWriteLock(async () => {
-    const db = await openTradeDatabase(databasePath)
+    const sqlitePath = getLocalSqlitePath(
+      databasePath,
+      getTradeStoreDatabasePath()
+    )
+    const db = await openTradeDatabase(sqlitePath)
 
     try {
       insertRows(db, rows)
@@ -329,10 +451,50 @@ export async function appendStoredTradeRowsIdempotently(
     requestId: string
     rows: TradeTableRow[]
   },
-  databasePath = getTradeStoreDatabasePath()
+  databasePath?: string
 ) {
+  if (shouldUsePostgresStorage(databasePath)) {
+    const sql = getPostgresSql()
+    const rowIds = rows.map((row) => row.id)
+    await ensurePostgresSchema(sql)
+
+    return sql.begin(async (transaction) => {
+      const existing = (await transaction`
+        SELECT payload_hash
+        FROM saved_trade_writes
+        WHERE request_id = ${requestId}
+      `) as { payload_hash: string }[]
+
+      if (existing[0]) {
+        if (existing[0].payload_hash !== payloadHash) {
+          throw new IdempotencyConflictError()
+        }
+
+        return {
+          replayed: true,
+          rows: await readRowsByIdPostgres(transaction, rowIds),
+        }
+      }
+
+      await upsertRowsPostgres(transaction, rows)
+      await transaction`
+        INSERT INTO saved_trade_writes (request_id, payload_hash)
+        VALUES (${requestId}, ${payloadHash})
+      `
+
+      return {
+        replayed: false,
+        rows: await readRowsByIdPostgres(transaction, rowIds),
+      }
+    })
+  }
+
   return withWriteLock(async () => {
-    const db = await openTradeDatabase(databasePath)
+    const sqlitePath = getLocalSqlitePath(
+      databasePath,
+      getTradeStoreDatabasePath()
+    )
+    const db = await openTradeDatabase(sqlitePath)
     const rowIds = rows.map((row) => row.id)
 
     try {
@@ -382,14 +544,32 @@ export async function appendStoredTradeRowsIdempotently(
 
 export async function deleteStoredTradeRows(
   ids: string[],
-  databasePath = getTradeStoreDatabasePath()
+  databasePath?: string
 ) {
   if (ids.length === 0) {
     return readStoredTradeRows(databasePath)
   }
 
+  if (shouldUsePostgresStorage(databasePath)) {
+    const sql = getPostgresSql()
+    await ensurePostgresSchema(sql)
+
+    await sql.begin(async (transaction) => {
+      await transaction`
+        DELETE FROM transactions
+        WHERE id IN ${transaction(ids)}
+      `
+    })
+
+    return readRowsFromPostgres(sql)
+  }
+
   return withWriteLock(async () => {
-    const db = await openTradeDatabase(databasePath)
+    const sqlitePath = getLocalSqlitePath(
+      databasePath,
+      getTradeStoreDatabasePath()
+    )
+    const db = await openTradeDatabase(sqlitePath)
 
     try {
       const statement = db.prepare("DELETE FROM transactions WHERE id = ?")
@@ -417,10 +597,48 @@ export async function deleteStoredTradeRows(
 export async function updateStoredTradeRow(
   id: string,
   row: UpdateTradeRequest["row"],
-  databasePath = getTradeStoreDatabasePath()
+  databasePath?: string
 ) {
+  if (shouldUsePostgresStorage(databasePath)) {
+    const sql = getPostgresSql()
+    await ensurePostgresSchema(sql)
+
+    return sql.begin(async (transaction) => {
+      const existing = (await transaction`
+        SELECT id
+        FROM transactions
+        WHERE id = ${id}
+      `) as { id: string }[]
+
+      if (!existing[0]) {
+        throw new TradeNotFoundError()
+      }
+
+      await transaction`
+        UPDATE transactions
+        SET
+          trade_date = ${row.date},
+          ticker = ${row.ticker},
+          quantity = ${row.quantity},
+          price = ${row.price},
+          currency = ${row.currency},
+          side = ${row.side},
+          account = ${row.account},
+          total_amount = ${row.totalAmount},
+          source_file = ${row.sourceFile}
+        WHERE id = ${id}
+      `
+
+      return readRowsFromPostgres(transaction)
+    })
+  }
+
   return withWriteLock(async () => {
-    const db = await openTradeDatabase(databasePath)
+    const sqlitePath = getLocalSqlitePath(
+      databasePath,
+      getTradeStoreDatabasePath()
+    )
+    const db = await openTradeDatabase(sqlitePath)
 
     try {
       const existing = db

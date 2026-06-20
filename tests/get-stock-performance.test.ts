@@ -28,9 +28,12 @@ describe("getStockPerformance", () => {
   it("returns a no-trades issue before aggregating holdings", async () => {
     mocks.readStoredTradeRows.mockResolvedValue([])
 
-    const result = await getStockPerformance.execute?.({
-      dateFrom: "2026-01-01",
-    })
+    const result = await getStockPerformance.execute?.(
+      {
+        dateFrom: "2026-01-01",
+      },
+      undefined as never
+    )
 
     expect(mocks.aggregateHoldings).not.toHaveBeenCalled()
     expect(result).toEqual({
@@ -78,10 +81,13 @@ describe("getStockPerformance", () => {
       }
     })
 
-    const result = await getStockPerformance.execute?.({
-      dateFrom: "2026-01-01",
-      tickers: [" aa ", "tsm"],
-    })
+    const result = await getStockPerformance.execute?.(
+      {
+        dateFrom: "2026-01-01",
+        tickers: [" aa ", "tsm"],
+      },
+      undefined as never
+    )
 
     expect(mocks.fetchTickerHistory).toHaveBeenCalledTimes(2)
     expect(mocks.fetchTickerHistory).toHaveBeenNthCalledWith(
@@ -161,10 +167,13 @@ describe("getStockPerformance", () => {
       throw new Error("history unavailable")
     })
 
-    const result = await getStockPerformance.execute?.({
-      dateFrom: "2026-01-01",
-      dateTo: "2026-02-01",
-    })
+    const result = await getStockPerformance.execute?.(
+      {
+        dateFrom: "2026-01-01",
+        dateTo: "2026-02-01",
+      },
+      undefined as never
+    )
 
     expect(result).toEqual({
       stocks: [

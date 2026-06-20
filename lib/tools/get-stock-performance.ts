@@ -1,7 +1,10 @@
 import { tool } from "ai"
 import { z } from "zod"
 
-import { aggregateHoldings, type ValuedHolding } from "@/lib/portfolio/holdings"
+import {
+  aggregateHoldings,
+  type AggregatedHolding,
+} from "@/lib/portfolio/holdings"
 import type { SupportedMarket } from "@/lib/portfolio/schema"
 import type { DailyPriceSeries } from "@/lib/quotes/history-cache"
 import { fetchTickerHistory } from "@/lib/quotes/history"
@@ -70,7 +73,7 @@ function getLatestPrice(
 }
 
 function matchesRequestedTicker(
-  holding: ValuedHolding,
+  holding: AggregatedHolding,
   tickers: string[] | undefined
 ) {
   if (!tickers) {
@@ -84,13 +87,13 @@ function matchesRequestedTicker(
 }
 
 function filterTargetHoldings(
-  holdings: ValuedHolding[],
+  holdings: AggregatedHolding[],
   tickers: string[] | undefined
 ) {
   return holdings.filter((holding) => matchesRequestedTicker(holding, tickers))
 }
 
-function collectUniqueTargets(holdings: ValuedHolding[]) {
+function collectUniqueTargets(holdings: AggregatedHolding[]) {
   const uniqueTargets = new Map<string, StockPerformanceTarget>()
 
   for (const holding of holdings) {

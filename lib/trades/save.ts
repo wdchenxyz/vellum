@@ -8,10 +8,7 @@ import {
   type ReviewedTradeInput,
   type TradeTableRow,
 } from "@/lib/trades/schema"
-import {
-  appendStoredTradeRowsIdempotently,
-  getTradeStoreDatabasePath,
-} from "@/lib/trades/storage"
+import { appendStoredTradeRowsIdempotently } from "@/lib/trades/storage"
 
 export class InvalidSavedTradeRequestError extends Error {
   constructor(
@@ -66,10 +63,7 @@ export function buildSavedTradeRows({
   }))
 }
 
-export async function saveReviewedTrades(
-  body: unknown,
-  databasePath = getTradeStoreDatabasePath()
-) {
+export async function saveReviewedTrades(body: unknown, databasePath?: string) {
   const parsed = saveReviewedTradesRequestSchema.safeParse(body)
 
   if (!parsed.success) {

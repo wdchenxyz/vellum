@@ -40,3 +40,4 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 data/history-cache.json
+.vercel
